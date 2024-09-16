@@ -1,53 +1,46 @@
 # ローカルRAGプロジェクト
 
-このプロジェクトは、ローカル環境でRetrieval-Augmented Generation (RAG) システムを実現することを目的としています。
-
-## 目的
-
-ローカル環境でRAGを実装し、効率的な情報検索と生成を可能にします。これにより、外部APIに依存せずに、カスタマイズされた質問応答システムを構築できます。
+## 概要
+このプロジェクトは、ローカル環境でRetrieval-Augmented Generation (RAG) システムを実現することを目的としています。外部APIに依存せずに、効率的な情報検索と生成を可能にし、カスタマイズされた質問応答システムを構築します。
 
 ## セットアップ
 
-1. リポジトリをクローンします：
+1. リポジトリのクローン：
    ```
    git clone https://github.com/outan/local_rag
+   cd local_rag
    ```
 
-1. プロジェクトディレクトリに移動します：
-   ```
-   cd [プロジェクトディレクトリ名]
-   ```
-
-1. 仮想環境を作成し、アクティブ化します：
+1. 仮想環境の作成とアクティベーション：
    ```
    python -m venv rag_env
-   source rag_env/bin/activate  # Linuxの場合
+   source rag_env/bin/activate  # Linux/macOS
    # または
-   rag_env\Scripts\activate  # Windowsの場合
+   rag_env\Scripts\activate  # Windows
    ```
 
-1. 依存関係をインストールします：
+1. 依存関係のインストール：
    ```
    pip install -r requirements.txt
    ```
 
 ## プロジェクト構造
 
-- `basic_rag.py`: RAGシステムの主要なロジックを含むスクリプト
-- `data_preparation.py`: データの準備とベクトルストアの作成を行うスクリプト
-- `check_faiss.py`: FAISSベクトルストアの確認用スクリプト
-- `requirements.txt`: プロジェクトの依存関係リスト
-- `.gitignore`: バージョン管理から除外するファイルやディレクトリを指定
-- `data/`: サンプルデータを含むディレクトリ
-- `vectorstore/`: FAISSベクトルストアのデータを保存するディレクトリ（gitignoreされています）
+- `basic_rag.py`: RAGシステムの主要ロジック
+- `vectorstore_preparation.py`: チャンクの分割とベクトルストア作成
+- `check_faiss.py`: FAISSベクトルストア確認用
+- `requirements.txt`: プロジェクト依存関係リスト
+- `.gitignore`: バージョン管理除外ファイル指定
+- `data/`: サンプルデータ格納ディレクトリ
+- `vectorstore/`: FAISSベクトルストアデータ保存ディレクトリ（gitignore対象）
 
 ## 使用方法
 
-1. データの準備：
-- data/フォルダにテキストファイル（.txtまたは.md）を用意してください。
-- これらのファイルがRAGシステムの知識ベースとなります。
+1. データ準備：
+   - `data/`フォルダにテキストファイル（.txtまたは.md）を配置
+   - これらのファイルがRAGシステムの知識ベースとなります
 
-1. ベクトルストアの作成：
+1. ベクトルストア作成：
    ```
    python vectorstore_preparation.py
    ```
@@ -71,12 +64,12 @@
             - 検索設定：デフォルトの類似度検索パラメータ（例：k値）
             - その他の設定（バージョン、作成日時など）
 
-1. ベクトルストアの確認：
+1. ベクトルストア確認：
    ```
    python check_faiss.py
    ```
 
-1. RAGシステムの実行：
+1. RAGシステム実行：
    ```
    python basic_rag.py
    ```
