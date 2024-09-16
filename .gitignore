@@ -1,0 +1,46 @@
+# Python仮想環境
+rag_env/
+
+# Python関連
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 分析ノートブック
+.ipynb_checkpoints
+
+# OS関連
+.DS_Store
+Thumbs.db
+
+# エディタ関連
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 環境変数
+.env
+
+# ログファイル
+*.log
+
+# キャッシュディレクトリ
+.cache/
+
+# 一時ファイル
+tmp/
+temp/
+
+# ビルド出力
+build/
+dist/
+
+# 依存関係
+# requirements.txtはコミットするため、ここでは除外しません
+
+# その他のプロジェクト固有のファイルやディレクトリ
+# 必要に応じて追加してください
+
+# vectorstoreフォルダを除外
+vectorstore/
