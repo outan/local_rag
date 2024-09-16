@@ -1,21 +1,15 @@
 import warnings
 from urllib3.exceptions import NotOpenSSLWarning
 from transformers import logging as transformers_logging
-
-# 警告を無視
-warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
-transformers_logging.set_verbosity_error()
-
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 from langchain_community.llms import Ollama
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
-import warnings
-from urllib3.exceptions import NotOpenSSLWarning
 
-# urllib3の警告を無視
+# 警告を無視
 warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
+transformers_logging.set_verbosity_error()
 
 def load_vectorstore():
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
@@ -29,23 +23,52 @@ def print_bordered(title, content):
     print(content)
     print(border)
 
-def main():
-    # 保存されたベクトルストアを読み込む
-    vectorstore = load_vectorstore()
+def get_no_rag_answer(llm, query):
+    print_bordered("RAGを利用しない処理", "プロセスの詳細")
+    try:
+        no_rag_prompt = f"以下のクエリに日本語で簡潔に答えてください。専門用語は説明を加えてください。\n\nクエリ: {query}\n\n"
+        print("プロンプト:", no_rag_prompt)
+        no_rag_answer = llm.invoke(no_rag_prompt)
+        print("生成された回答:", no_rag_answer)
+        return no_rag_answer
+    except Exception as e:
+        error_message = f"エラーが発生しました: {str(e)}"
+        print("エラー:", error_message)
+        return error_message
 
-    # Ollamaを使用してLLMを設定（Mistralモデルを使用）
+def get_rag_answer(qa_chain, query):
+    print_bordered("RAGを利用した処理", "プロセスの詳細")
+    try:
+        print("クエリ:", query)
+        rag_result = qa_chain.invoke({"query": query})
+        print("\n検索された関連ドキュメント:")
+        for i, doc in enumerate(rag_result['source_documents']):
+            print(f"ドキュメント {i+1}:")
+            print(f"  内容: {doc.page_content[:50]}...")
+            print(f"  ...{doc.page_content[-50:]}")
+            print(f"  メタデータ: {doc.metadata}")
+            print("  " + "-" * 50)
+        
+        rag_answer = rag_result['result'].strip()
+        print("\n生成された回答:", rag_answer)
+        return rag_answer
+    except Exception as e:
+        error_message = f"エラーが発生しました: {str(e)}"
+        print("エラー:", error_message)
+        return error_message
+
+def main():
+    vectorstore = load_vectorstore()
     llm = Ollama(model="mistral", temperature=0.7)
 
-    # RAGチェーンの作成
-    prompt_template = """以下の情報を参考にして、質問に日本語で答えてください。回答は必ず日本語でお願いします。
+    prompt_template = """以下の情報を参考にして、クエリに日本語で答えてください。回答は必ず日本語でお願いします。
     簡潔かつ分かりやすく説明してください。専門用語は必要に応じて説明を加えてください。
     英語での回答は避け、日本語のみで回答してください。
 
     参考情報：
     {context}
 
-    質問: {question}
-
+    クエリ: {question}
     """
 
     PROMPT = PromptTemplate(
@@ -60,45 +83,13 @@ def main():
         chain_type_kwargs={"prompt": PROMPT}
     )
 
-    # 評価用の質問
-    question = "RAGとファインチューニングの違いは何ですか？"
+    query = "RAGとファインチューニングの違いは何ですか？"
 
-    # RAGを利用しない回答
-    print_bordered("RAGを利用しない処理", "プロセスの詳細")
-    try:
-        no_rag_prompt = f"以下の質問に日本語で簡潔に答えてください。専門用語は説明を加えてください。\n\n質問: {question}\n\n"
-        print("プロンプト:", no_rag_prompt)
-        no_rag_answer = llm.invoke(no_rag_prompt)
-        print("生成された回答:", no_rag_answer)
-    except Exception as e:
-        no_rag_answer = f"エラーが発生しました: {str(e)}"
-        print("エラー:", no_rag_answer)
+    no_rag_answer = get_no_rag_answer(llm, query)
+    rag_answer = get_rag_answer(qa_chain, query)
 
-    # RAGを利用した回答
-    print_bordered("RAGを利用した処理", "プロセスの詳細")
-    try:
-        print("検索クエリ:", question)
-        rag_result = qa_chain.invoke({"query": question})
-        print("\n検索された関連ドキュメント:")
-        for i, doc in enumerate(rag_result['source_documents']):
-            print(f"ドキュメント {i+1}:")
-            print(f"  内容: {doc.page_content[:50]}...")  # 最初の50文字のみ表示
-            print(f"  ...{doc.page_content[-50:]}")  # 最後の50文字のみ表示
-            print(f"  メタデータ: {doc.metadata}")
-            print("  ----------------------------------")  # ドキュメントとドキュメントの間に線を表示
-        
-        print("\n生成されたプロンプト:")
-        print(PROMPT.format(context=rag_result['source_documents'], question=question))
-        
-        rag_answer = rag_result['result'].strip()
-        print("\n生成された回答:", rag_answer)
-    except Exception as e:
-        rag_answer = f"エラーが発生しました: {str(e)}"
-        print("エラー:", rag_answer)
-
-    # 結果の比較
-    print_bordered("RAGを利用しない結果", no_rag_answer)
-    print_bordered("RAGを利用した結果", rag_answer)
+    # print_bordered("RAGを利用しない回答", no_rag_answer)
+    # print_bordered("RAGを利用した回答", rag_answer)
 
 if __name__ == "__main__":
     main()
