@@ -10,7 +10,7 @@
 
 1. リポジトリをクローンします：
    ```
-   git clone [リポジトリのURL]
+   git clone https://github.com/outan/local_rag
    ```
 
 1. プロジェクトディレクトリに移動します：
