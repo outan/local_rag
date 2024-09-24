@@ -44,3 +44,6 @@ dist/
 
 # vectorstoreフォルダを除外
 vectorstore/
+
+# dataフォルダを除外
+/data/
