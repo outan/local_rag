@@ -6,6 +6,10 @@ from langchain.text_splitter import CharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import PGVector
 from transformers import logging as transformers_logging
+from dotenv import load_dotenv
+
+# 環境変数を読み込む
+load_dotenv()
 
 # urllib3の警告を無視
 warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
@@ -13,7 +17,14 @@ warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
 # transformersの警告を無視
 transformers_logging.set_verbosity_error()
 
-CONNECTION_STRING = "postgresql://dan.w@localhost:5432/rag_test"
+# 環境変数から接続情報を取得
+DB_NAME = os.getenv('DB_NAME')
+DB_USER = os.getenv('DB_USER')
+DB_PASSWORD = os.getenv('DB_PASSWORD')
+DB_HOST = os.getenv('DB_HOST')
+DB_PORT = os.getenv('DB_PORT')
+
+CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 def load_and_split_text(file_path, chunk_size=500, chunk_overlap=50):
     # データの読み込み
