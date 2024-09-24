@@ -42,8 +42,5 @@ dist/
 # その他のプロジェクト固有のファイルやディレクトリ
 # 必要に応じて追加してください
 
-# vectorstoreフォルダを除外
-vectorstore/
-
 # dataフォルダを除外
 /data/
