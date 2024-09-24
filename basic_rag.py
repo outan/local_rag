@@ -4,16 +4,18 @@ from transformers import logging as transformers_logging
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 from langchain_community.llms import Ollama
-from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores import PGVector
 from langchain_huggingface import HuggingFaceEmbeddings
 
 # 警告を無視
 warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
 transformers_logging.set_verbosity_error()
 
+CONNECTION_STRING = "postgresql://dan.w@localhost:5432/rag_test"
+
 def load_vectorstore():
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    return FAISS.load_local("vectorstore", embeddings, allow_dangerous_deserialization=True)
+    return PGVector(connection_string=CONNECTION_STRING, embedding_function=embeddings, collection_name="your_collection_name")
 
 def print_bordered(title, content):
     border = "=" * 50
@@ -48,7 +50,6 @@ def get_rag_answer(qa_chain, query):
             print(f"  ...{doc.page_content[-50:]}")
             print(f"  メタデータ: {doc.metadata}")
             print("  " + "-" * 50)
-        
         rag_answer = rag_result['result'].strip()
         print("\n生成された回答:", rag_answer)
         return rag_answer
