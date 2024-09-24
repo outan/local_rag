@@ -67,6 +67,16 @@
             16705 | vector  |       10 |         2200 | t              | 0.7.4      |           | 
             ```
 
+1. 環境変数の準備
+プロジェクトの直下に.envファイルを作成して、以下の内容を追加
+    ```
+    DB_NAME=rag_test
+    DB_USER=<your username> (OSのユーザー名と同じ名前のデータベースユーザーを自動的に作成)
+    DB_PASSWORD=<your password> (デフォルトはpasswordなしです)
+    DB_HOST=localhost
+    DB_PORT=5432
+    ```
+
 ## プロジェクト構造
 
 - `basic_rag.py`: RAGシステムの主要ロジック
