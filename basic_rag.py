@@ -1,14 +1,13 @@
 import warnings
 from urllib3.exceptions import NotOpenSSLWarning
 from transformers import logging as transformers_logging
-from langchain.chains import RetrievalQAWithSourcesChain, RetrievalQA
 from langchain.prompts import PromptTemplate
 from langchain_community.llms import Ollama
 from langchain_community.vectorstores import PGVector
 from langchain_huggingface import HuggingFaceEmbeddings
 from dotenv import load_dotenv
 import os
-import sys
+
 
 # 環境変数を読み込む
 load_dotenv()
@@ -70,6 +69,8 @@ def get_rag_answer(qa_chain, retriever, query):
     except Exception as e:
         error_message = f"エラーが発生しました: {str(e)}"
         print("エラー:", error_message)
+
+
 
 def main():
     vectorstore = load_vectorstore()
