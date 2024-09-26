@@ -59,12 +59,12 @@ def get_rag_answer(qa_chain, retriever, query):
 class StreamHandler(BaseCallbackHandler):
     def __init__(self, container, prefix=""):
         self.container = container
-        self.text = prefix
+        self.text = ""
         self.prefix = prefix
 
     def on_llm_new_token(self, token: str, **kwargs) -> None:
         self.text += token
-        self.container.markdown(self.text)
+        self.container.markdown(f"{self.prefix}\n\n{self.text}")
 
 class CombinedStreamHandler(BaseCallbackHandler):
     def __init__(self, streamlit_handler, stdout_handler):
@@ -106,6 +106,8 @@ def generate_response(query, chat_history, vectorstore, llm, combined_handler):
     return combined_handler.text, result['source_documents']
 
 def main():
+    st.set_page_config(layout="wide")  # ページ全体を広く使用
+    
     st.title("RAGシステム")
 
     # セッション状態の初期化
@@ -133,27 +135,41 @@ def main():
     # ストリーミング出力用のコンテナ
     stream_container = st.container()
 
-    # 新しい質問の入力
-    query = st.text_input("新しい質問を入力してください：", key="query_input", value=st.session_state.query)
-    submit_button = st.button("送信", key="submit")
+    # 送信ボタンを入力欄の右に配置
+    input_container = st.container()
+    with input_container:
+        col1, col2, col3 = st.columns([20, 4, 1])
+        with col1:
+            query = st.text_input("新しい質問を入力してください：", key="query_input", value=st.session_state.query, label_visibility="collapsed")
+        with col2:
+            submit_button = st.button("送信", key="submit", use_container_width=True)
+        with col3:
+            st.write("")  # 空のカラムでバランスを取る
+
     if submit_button and query:
         with st.spinner("回答を生成中..."):
             with stream_container:
                 # RAGを利用しない回答のストリーミング
+                st.markdown("**RAGを利用しない回答：**")
                 no_rag_container = st.empty()
-                no_rag_streamlit_handler = StreamHandler(no_rag_container, prefix="RAGを利用しない回答：\n")
+                no_rag_streamlit_handler = StreamHandler(no_rag_container)
                 no_rag_stdout_handler = StreamingStdOutCallbackHandler()
                 no_rag_combined_handler = CombinedStreamHandler(no_rag_streamlit_handler, no_rag_stdout_handler)
                 
                 no_rag_answer = get_no_rag_answer(llm, query, no_rag_combined_handler)
                 
+                st.markdown("---")
+                
                 # RAGを利用する回答のストリーミング
+                st.markdown("**RAGを利用した回答：**")
                 rag_container = st.empty()
-                rag_streamlit_handler = StreamHandler(rag_container, prefix="RAGを利用した回答：\n")
+                rag_streamlit_handler = StreamHandler(rag_container)
                 rag_stdout_handler = StreamingStdOutCallbackHandler()
                 rag_combined_handler = CombinedStreamHandler(rag_streamlit_handler, rag_stdout_handler)
                 
                 rag_answer, source_docs = generate_response(query, [], vectorstore, llm, rag_combined_handler)
+                
+                st.markdown("---")
                 
                 # 参照元の表示
                 st.subheader("参照元:")
