@@ -131,6 +131,7 @@
 ## 4. プロジェクト構成
 
 - `basic_rag.py`: RAGシステムの主要ロジック
+- `basic_rag_streamlit.py`: RAGシステムの主要ロジック(Streamlitを使用)
 - `vectorstore_preparation.py`: チャンクの分割とベクトルストア作成
 - `requirements.txt`: プロジェクト依存関係リスト
 - `.gitignore`: バージョン管理除外ファイル指定
@@ -224,9 +225,17 @@ LangChainライブラリがPGVector（PostgreSQLベクトルデータベース�
         ![alt text](image.png)
 
 1. RAGシステム実行：
-   ```
-   python basic_rag.py
-   ```
+    1. 普通のバージョン：
+
+    ```shell
+    python basic_rag.py
+    ```
+
+    1. Streamlit使用バージョン：
+
+    ```shell
+    streamlit run basic_rag_streamlit.py
+    ```
 
 ## 6. 注意事項
 

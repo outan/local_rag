@@ -84,3 +84,4 @@ yarl==1.11.1
 psycopg2-binary
 pgvector
 langchain-community
+streamlit
