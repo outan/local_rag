@@ -16,6 +16,8 @@ from langchain.chat_models import ChatOpenAI
 from langchain.chains import ConversationalRetrievalChain
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 
+# streamlit_custom_buttonのインポートを削除
+
 # 警告を無視
 warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
 transformers_logging.set_verbosity_error()
@@ -47,7 +49,7 @@ def get_no_rag_answer(llm, query, combined_handler):
     クエリ: {query}
     """
     llm(no_rag_prompt.format(query=query), callbacks=[combined_handler])
-    return combined_handler.streamlit_handler.text
+    return combined_handler.text
 
 def get_rag_answer(qa_chain, retriever, query):
     docs = retriever.invoke(query)
@@ -68,10 +70,12 @@ class CombinedStreamHandler(BaseCallbackHandler):
     def __init__(self, streamlit_handler, stdout_handler):
         self.streamlit_handler = streamlit_handler
         self.stdout_handler = stdout_handler
+        self.text = ""
 
     def on_llm_new_token(self, token: str, **kwargs) -> None:
         self.streamlit_handler.on_llm_new_token(token, **kwargs)
         self.stdout_handler.on_llm_new_token(token, **kwargs)
+        self.text += token
 
 def generate_response(query, chat_history, vectorstore, llm, combined_handler):
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
@@ -99,7 +103,7 @@ def generate_response(query, chat_history, vectorstore, llm, combined_handler):
 
     result = chain({"question": query, "chat_history": chat_history}, callbacks=[combined_handler])
     
-    return combined_handler.streamlit_handler.text, result['source_documents']
+    return combined_handler.text, result['source_documents']
 
 def main():
     st.title("RAGシステム")
@@ -107,6 +111,8 @@ def main():
     # セッション状態の初期化
     if 'conversation_history' not in st.session_state:
         st.session_state.conversation_history = []
+    if 'query' not in st.session_state:
+        st.session_state.query = ""
 
     vectorstore = load_vectorstore()
     llm = Ollama(model="mistral", temperature=0.7)
@@ -124,12 +130,15 @@ def main():
             st.write(rag_answer)
         st.markdown("---")
 
-    # 新しい質問の入力
-    query = st.text_input("新しい質問を入力してください：")
+    # ストリーミング出力用のコンテナ
+    stream_container = st.container()
 
-    if st.button("回答を生成"):
-        if query:
-            with st.spinner("回答を生成中..."):
+    # 新しい質問の入力
+    query = st.text_input("新しい質問を入力してください：", key="query_input", value=st.session_state.query)
+    submit_button = st.button("送信", key="submit")
+    if submit_button and query:
+        with st.spinner("回答を生成中..."):
+            with stream_container:
                 # RAGを利用しない回答のストリーミング
                 no_rag_container = st.empty()
                 no_rag_streamlit_handler = StreamHandler(no_rag_container, prefix="RAGを利用しない回答：\n")
@@ -146,18 +155,19 @@ def main():
                 
                 rag_answer, source_docs = generate_response(query, [], vectorstore, llm, rag_combined_handler)
                 
-                # 会話履歴に追加
-                st.session_state.conversation_history.append((query, no_rag_answer, rag_answer))
-                
                 # 参照元の表示
                 st.subheader("参照元:")
                 for doc in source_docs:
                     st.write(doc.metadata['source'])
-            
-            # ページを再読み込みして履歴を更新
-            st.rerun()
-        else:
-            st.warning("質問を入力してください。")
+
+            # 会話履歴に追加
+            st.session_state.conversation_history.append((query, no_rag_answer, rag_answer))
+        
+        # 入力欄をクリア
+        st.session_state.query = ""
+        
+        # ページを再読み込みして履歴を更新
+        st.rerun()
 
 if __name__ == "__main__":
     main()
