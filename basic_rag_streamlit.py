@@ -83,7 +83,7 @@ class CombinedStreamHandler(BaseCallbackHandler):
         self.stdout_handler.on_llm_new_token(token, **kwargs)
         self.text += token
 
-def generate_response(query, chat_history, vectorstore, llm, combined_handler):
+def get_chunks(query, vectorstore):
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     
     # ベクトル変換の時間計測
@@ -95,6 +95,15 @@ def generate_response(query, chat_history, vectorstore, llm, combined_handler):
     start_time = time.time()
     docs = retriever.get_relevant_documents(query)
     retrieval_time = time.time() - start_time
+    
+    # 取得されたチャンクの内容を保存
+    retrieved_chunks = [doc.page_content for doc in docs]
+    print(f"Retrieved chunks: {retrieved_chunks}")  # デバッグ用
+    
+    return retrieved_chunks, vector_time, retrieval_time, docs
+
+def generate_response(query, chat_history, vectorstore, llm, combined_handler, retrieved_chunks):
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     
     prompt_template = """以下の情報を参考にして、クエリに日本語で答えてください。回答は必ず日本語でお願いします。
     簡潔かつ分かりやすく説明してください。専門用語は必要に応じて説明を加えてください。
@@ -122,10 +131,10 @@ def generate_response(query, chat_history, vectorstore, llm, combined_handler):
 
     # LLMでの回答生成の時間計測
     start_time = time.time()
-    result = chain({"question": query, "chat_history": chat_history}, callbacks=[combined_handler])
+    result = chain({"question": query, "chat_history": chat_history, "context": "\n\n".join(retrieved_chunks)}, callbacks=[combined_handler])
     llm_time = time.time() - start_time
     
-    return combined_handler.text, result['source_documents'], vector_time, retrieval_time, llm_time
+    return combined_handler.text, result['source_documents'], llm_time
 
 def get_available_models():
     try:
@@ -248,6 +257,9 @@ def main():
                     
                     st.markdown("---")
                     
+                    # チャンクの取得
+                    retrieved_chunks, vector_time, retrieval_time, source_docs = get_chunks(query, vectorstore)
+                    
                     # RAGを利用する回答のストリーミング
                     st.markdown("**RAGを利用した回答：**")
                     rag_container = st.empty()
@@ -255,7 +267,7 @@ def main():
                     rag_stdout_handler = StreamingStdOutCallbackHandler()
                     rag_combined_handler = CombinedStreamHandler(rag_streamlit_handler, rag_stdout_handler)
                     
-                    rag_answer, source_docs, vector_time, retrieval_time, llm_time = generate_response(query, st.session_state.llm_history, vectorstore, llm, rag_combined_handler)
+                    rag_answer, _, llm_time = generate_response(query, st.session_state.llm_history, vectorstore, llm, rag_combined_handler, retrieved_chunks)
                     
                     st.markdown("**処理時間:**")
                     st.write(f"ベクトル変換: {vector_time:.4f}秒")
@@ -264,10 +276,17 @@ def main():
                     
                     st.markdown("---")
                     
-                    # 参照元の表示
-                    st.subheader("参照元:")
-                    for doc in source_docs:
-                        st.write(doc.metadata['source'])
+                    # チャンクの表示
+                    st.subheader("取得されたチャンク:")
+                    for i, chunk in enumerate(retrieved_chunks):
+                        st.markdown(f"**チャンク {i+1}:**")
+                        st.write(chunk)
+                        st.markdown("---")
+
+                # 参照元の表示
+                st.subheader("参照元:")
+                for doc in source_docs:
+                    st.write(doc.metadata['source'])
 
             # 会話履歴と処理時間をセッション状態に追加
             st.session_state.conversation_history.append((query, no_rag_answer, rag_answer))
@@ -281,9 +300,6 @@ def main():
         finally:
             # 入力欄をクリア
             st.session_state.query = ""
-        
-        # ページを再読み込みして履歴を更新
-        st.rerun()
 
 if __name__ == "__main__":
     main()
