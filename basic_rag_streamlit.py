@@ -7,15 +7,15 @@ from langchain_community.llms import Ollama
 from langchain_community.vectorstores import PGVector
 from langchain_huggingface import HuggingFaceEmbeddings
 from dotenv import load_dotenv
-from langchain.chains import LLMChain
+from langchain.chains import LLMChain, ConversationalRetrievalChain
 from langchain.chains.combine_documents.stuff import StuffDocumentsChain
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.schema import LLMResult
 from langchain.chat_models import ChatOpenAI
-from langchain.chains import ConversationalRetrievalChain
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 import time
 import os
+import requests
 
 # 警告を無視
 warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
@@ -30,6 +30,7 @@ DB_USER = os.getenv('DB_USER')
 DB_PASSWORD = os.getenv('DB_PASSWORD')
 DB_HOST = os.getenv('DB_HOST')
 DB_PORT = os.getenv('DB_PORT')
+OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', "http://localhost:11434")
 
 CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
@@ -43,7 +44,7 @@ def load_vectorstore():
 
 def get_no_rag_answer(llm, query, combined_handler, chat_history):
     no_rag_prompt = """以下のクエリに日本語で簡潔に答えてください。専門用語は説明を加えてください。
-    回答は必ず日本語でお願いします。英語での回答は避け、日本語のみで回答してください。
+    回答は必ず日本語でお願いします。英語での回答は避け、日本語のみで答してください。
     
     これまでの会話履歴:
     {chat_history}
@@ -126,6 +127,19 @@ def generate_response(query, chat_history, vectorstore, llm, combined_handler):
     
     return combined_handler.text, result['source_documents'], vector_time, retrieval_time, llm_time
 
+def get_available_models():
+    try:
+        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags")
+        if response.status_code == 200:
+            models = response.json()["models"]
+            return [model["name"] for model in models]
+        else:
+            st.error(f"Ollamaからモデルリストを取得できませんでした。ステータスコード: {response.status_code}")
+            return []
+    except Exception as e:
+        st.error(f"Ollamaからモデルリストを取得できませんでした: {str(e)}")
+        return []
+
 def main():
     st.set_page_config(layout="wide")  # ページ全体を広く使用
     
@@ -140,9 +154,39 @@ def main():
         st.session_state.query = ""
     if 'processing_times' not in st.session_state:
         st.session_state.processing_times = []
+    if 'selected_model' not in st.session_state:
+        st.session_state.selected_model = None
+
+    # 利用可能なモデルのリストを取得
+    available_models = get_available_models()
+
+    if not available_models:
+        st.warning("利用可能なLLMモデルが見つかりません。Ollamaを使用してローカルにモデルをダウンロードしてください。")
+        st.stop()  # これ以降の処理を停止
+
+    # 初回実行時または選択されたモデルが利用可能でない場合、最初のモデルを選択
+    if st.session_state.selected_model not in available_models:
+        st.session_state.selected_model = available_models[0]
+
+    # サイドバーにモデル選択ウィジェットを追加
+    st.sidebar.title("LLMモデル選択")
+    selected_model = st.sidebar.selectbox(
+        "使用するLLMモデルを選択してください：",
+        options=available_models,
+        index=available_models.index(st.session_state.selected_model)
+    )
+
+    # モデルが変更された場合、セッション状態を更新
+    if selected_model != st.session_state.selected_model:
+        st.session_state.selected_model = selected_model
+        st.session_state.conversation_history = []
+        st.session_state.llm_history = []
+        st.session_state.processing_times = []
+        st.rerun()
 
     vectorstore = load_vectorstore()
-    llm = Ollama(model="mistral", temperature=0.7)
+    
+    llm = Ollama(model=st.session_state.selected_model, temperature=0.7, base_url=OLLAMA_BASE_URL)
 
     # 会話履歴の表示
     for i, (query, no_rag_answer, rag_answer) in enumerate(st.session_state.conversation_history):
