@@ -17,8 +17,6 @@ from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 import time
 import os
 
-# streamlit_custom_buttonのインポートを削除
-
 # 警告を無視
 warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
 transformers_logging.set_verbosity_error()
@@ -43,21 +41,25 @@ def load_vectorstore():
         collection_name="your_collection_name"
     )
 
-def get_no_rag_answer(llm, query, combined_handler):
+def get_no_rag_answer(llm, query, combined_handler, chat_history):
     no_rag_prompt = """以下のクエリに日本語で簡潔に答えてください。専門用語は説明を加えてください。
     回答は必ず日本語でお願いします。英語での回答は避け、日本語のみで回答してください。
+    
+    これまでの会話履歴:
+    {chat_history}
 
     クエリ: {query}
     """
     start_time = time.time()
-    llm(no_rag_prompt.format(query=query), callbacks=[combined_handler])
+    formatted_chat_history = "\n".join([f"Human: {h[0]}\nAI: {h[1]}" for h in chat_history])
+    llm(no_rag_prompt.format(query=query, chat_history=formatted_chat_history), callbacks=[combined_handler])
     no_rag_time = time.time() - start_time
     return combined_handler.text, no_rag_time
 
-def get_rag_answer(qa_chain, retriever, query):
+def get_rag_answer(qa_chain, retriever, query, chat_history):
     docs = retriever.invoke(query)
     context = "\n\n".join([doc.page_content for doc in docs])
-    return qa_chain.llm_chain.llm(qa_chain.llm_chain.prompt.format(context=context, question=query))
+    return qa_chain.llm_chain.llm(qa_chain.llm_chain.prompt.format(context=context, question=query, chat_history=chat_history))
 
 class StreamHandler(BaseCallbackHandler):
     def __init__(self, container, prefix=""):
@@ -97,6 +99,9 @@ def generate_response(query, chat_history, vectorstore, llm, combined_handler):
     簡潔かつ分かりやすく説明してください。専門用語は必要に応じて説明を加えてください。
     英語での回答は避け、日本語のみで回答してください。
 
+    これまでの会話履歴:
+    {chat_history}
+
     参考情報：
     {context}
 
@@ -104,7 +109,7 @@ def generate_response(query, chat_history, vectorstore, llm, combined_handler):
     """
     
     PROMPT = PromptTemplate(
-        template=prompt_template, input_variables=["context", "question"]
+        template=prompt_template, input_variables=["context", "question", "chat_history"]
     )
     
     chain = ConversationalRetrievalChain.from_llm(
@@ -129,6 +134,8 @@ def main():
     # セッション状態の初期化
     if 'conversation_history' not in st.session_state:
         st.session_state.conversation_history = []
+    if 'llm_history' not in st.session_state:
+        st.session_state.llm_history = []
     if 'query' not in st.session_state:
         st.session_state.query = ""
     if 'processing_times' not in st.session_state:
@@ -188,7 +195,7 @@ def main():
                     no_rag_stdout_handler = StreamingStdOutCallbackHandler()
                     no_rag_combined_handler = CombinedStreamHandler(no_rag_streamlit_handler, no_rag_stdout_handler)
                     
-                    no_rag_answer, no_rag_time = get_no_rag_answer(llm, query, no_rag_combined_handler)
+                    no_rag_answer, no_rag_time = get_no_rag_answer(llm, query, no_rag_combined_handler, st.session_state.llm_history)
                     
                     st.markdown("**処理時間:**")
                     st.write(f"回答生成: {no_rag_time:.4f}秒")
@@ -204,7 +211,7 @@ def main():
                     rag_stdout_handler = StreamingStdOutCallbackHandler()
                     rag_combined_handler = CombinedStreamHandler(rag_streamlit_handler, rag_stdout_handler)
                     
-                    rag_answer, source_docs, vector_time, retrieval_time, llm_time = generate_response(query, [], vectorstore, llm, rag_combined_handler)
+                    rag_answer, source_docs, vector_time, retrieval_time, llm_time = generate_response(query, st.session_state.llm_history, vectorstore, llm, rag_combined_handler)
                     
                     st.markdown("**処理時間:**")
                     st.write(f"ベクトル変換: {vector_time:.4f}秒")
@@ -220,6 +227,7 @@ def main():
 
             # 会話履歴と処理時間をセッション状態に追加
             st.session_state.conversation_history.append((query, no_rag_answer, rag_answer))
+            st.session_state.llm_history.append((query, rag_answer))
             st.session_state.processing_times.append((no_rag_time, vector_time, retrieval_time, llm_time))
         
         except Exception as e:
