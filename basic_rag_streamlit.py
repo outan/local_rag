@@ -7,7 +7,6 @@ from langchain_community.llms import Ollama
 from langchain_community.vectorstores import PGVector
 from langchain_huggingface import HuggingFaceEmbeddings
 from dotenv import load_dotenv
-import os
 from langchain.chains import LLMChain
 from langchain.chains.combine_documents.stuff import StuffDocumentsChain
 from langchain.callbacks.base import BaseCallbackHandler
@@ -15,6 +14,8 @@ from langchain.schema import LLMResult
 from langchain.chat_models import ChatOpenAI
 from langchain.chains import ConversationalRetrievalChain
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+import time
+import os
 
 # streamlit_custom_buttonのインポートを削除
 
@@ -48,8 +49,10 @@ def get_no_rag_answer(llm, query, combined_handler):
 
     クエリ: {query}
     """
+    start_time = time.time()
     llm(no_rag_prompt.format(query=query), callbacks=[combined_handler])
-    return combined_handler.text
+    no_rag_time = time.time() - start_time
+    return combined_handler.text, no_rag_time
 
 def get_rag_answer(qa_chain, retriever, query):
     docs = retriever.invoke(query)
@@ -80,6 +83,16 @@ class CombinedStreamHandler(BaseCallbackHandler):
 def generate_response(query, chat_history, vectorstore, llm, combined_handler):
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     
+    # ベクトル変換の時間計測
+    start_time = time.time()
+    query_vector = vectorstore.embedding_function.embed_query(query)
+    vector_time = time.time() - start_time
+    
+    # ベクターデータベースからの関連情報検索の時間計測
+    start_time = time.time()
+    docs = retriever.get_relevant_documents(query)
+    retrieval_time = time.time() - start_time
+    
     prompt_template = """以下の情報を参考にして、クエリに日本語で答えてください。回答は必ず日本語でお願いします。
     簡潔かつ分かりやすく説明してください。専門用語は必要に応じて説明を加えてください。
     英語での回答は避け、日本語のみで回答してください。
@@ -101,9 +114,12 @@ def generate_response(query, chat_history, vectorstore, llm, combined_handler):
         combine_docs_chain_kwargs={"prompt": PROMPT}
     )
 
+    # LLMでの回答生成の時間計測
+    start_time = time.time()
     result = chain({"question": query, "chat_history": chat_history}, callbacks=[combined_handler])
+    llm_time = time.time() - start_time
     
-    return combined_handler.text, result['source_documents']
+    return combined_handler.text, result['source_documents'], vector_time, retrieval_time, llm_time
 
 def main():
     st.set_page_config(layout="wide")  # ページ全体を広く使用
@@ -115,6 +131,8 @@ def main():
         st.session_state.conversation_history = []
     if 'query' not in st.session_state:
         st.session_state.query = ""
+    if 'processing_times' not in st.session_state:
+        st.session_state.processing_times = []
 
     vectorstore = load_vectorstore()
     llm = Ollama(model="mistral", temperature=0.7)
@@ -127,9 +145,22 @@ def main():
         with col1:
             st.markdown("**RAGを利用しない回答**")
             st.write(no_rag_answer)
+            if i < len(st.session_state.processing_times):
+                no_rag_time, _, _, _ = st.session_state.processing_times[i]
+                st.markdown("**処理時間:**")
+                st.write(f"回答生成: {no_rag_time:.4f}秒")
+                st.write("ベクトル変換: 0.0000秒")
+                st.write("関連情報検索: 0.0000秒")
         with col2:
             st.markdown("**RAGを利用した回答**")
             st.write(rag_answer)
+            if i < len(st.session_state.processing_times):
+                _, vector_time, retrieval_time, llm_time = st.session_state.processing_times[i]
+                st.markdown("**処理時間:**")
+                st.write(f"ベクトル変換: {vector_time:.4f}秒")
+                st.write(f"関連情報検索: {retrieval_time:.4f}秒")
+                st.write(f"回答生成: {llm_time:.4f}秒")
+        
         st.markdown("---")
 
     # ストリーミング出力用のコンテナ
@@ -147,40 +178,57 @@ def main():
             st.write("")  # 空のカラムでバランスを取る
 
     if submit_button and query:
-        with st.spinner("回答を生成中..."):
-            with stream_container:
-                # RAGを利用しない回答のストリーミング
-                st.markdown("**RAGを利用しない回答：**")
-                no_rag_container = st.empty()
-                no_rag_streamlit_handler = StreamHandler(no_rag_container)
-                no_rag_stdout_handler = StreamingStdOutCallbackHandler()
-                no_rag_combined_handler = CombinedStreamHandler(no_rag_streamlit_handler, no_rag_stdout_handler)
-                
-                no_rag_answer = get_no_rag_answer(llm, query, no_rag_combined_handler)
-                
-                st.markdown("---")
-                
-                # RAGを利用する回答のストリーミング
-                st.markdown("**RAGを利用した回答：**")
-                rag_container = st.empty()
-                rag_streamlit_handler = StreamHandler(rag_container)
-                rag_stdout_handler = StreamingStdOutCallbackHandler()
-                rag_combined_handler = CombinedStreamHandler(rag_streamlit_handler, rag_stdout_handler)
-                
-                rag_answer, source_docs = generate_response(query, [], vectorstore, llm, rag_combined_handler)
-                
-                st.markdown("---")
-                
-                # 参照元の表示
-                st.subheader("参照元:")
-                for doc in source_docs:
-                    st.write(doc.metadata['source'])
+        try:
+            with st.spinner("回答を生成中..."):
+                with stream_container:
+                    # RAGを利用しない回答のストリーミング
+                    st.markdown("**RAGを利用しない回答：**")
+                    no_rag_container = st.empty()
+                    no_rag_streamlit_handler = StreamHandler(no_rag_container)
+                    no_rag_stdout_handler = StreamingStdOutCallbackHandler()
+                    no_rag_combined_handler = CombinedStreamHandler(no_rag_streamlit_handler, no_rag_stdout_handler)
+                    
+                    no_rag_answer, no_rag_time = get_no_rag_answer(llm, query, no_rag_combined_handler)
+                    
+                    st.markdown("**処理時間:**")
+                    st.write(f"回答生成: {no_rag_time:.4f}秒")
+                    st.write("ベクトル変換: 0.0000秒")
+                    st.write("関連情報検索: 0.0000秒")
+                    
+                    st.markdown("---")
+                    
+                    # RAGを利用する回答のストリーミング
+                    st.markdown("**RAGを利用した回答：**")
+                    rag_container = st.empty()
+                    rag_streamlit_handler = StreamHandler(rag_container)
+                    rag_stdout_handler = StreamingStdOutCallbackHandler()
+                    rag_combined_handler = CombinedStreamHandler(rag_streamlit_handler, rag_stdout_handler)
+                    
+                    rag_answer, source_docs, vector_time, retrieval_time, llm_time = generate_response(query, [], vectorstore, llm, rag_combined_handler)
+                    
+                    st.markdown("**処理時間:**")
+                    st.write(f"ベクトル変換: {vector_time:.4f}秒")
+                    st.write(f"関連情報検索: {retrieval_time:.4f}秒")
+                    st.write(f"回答生成: {llm_time:.4f}秒")
+                    
+                    st.markdown("---")
+                    
+                    # 参照元の表示
+                    st.subheader("参照元:")
+                    for doc in source_docs:
+                        st.write(doc.metadata['source'])
 
-            # 会話履歴に追加
+            # 会話履歴と処理時間をセッション状態に追加
             st.session_state.conversation_history.append((query, no_rag_answer, rag_answer))
+            st.session_state.processing_times.append((no_rag_time, vector_time, retrieval_time, llm_time))
         
-        # 入力欄をクリア
-        st.session_state.query = ""
+        except Exception as e:
+            st.error(f"エラーが発生しました: {str(e)}")
+            print(f"詳細なエラー情報: {e}")  # デバッグ用にコンソールに詳細を出力
+        
+        finally:
+            # 入力欄をクリア
+            st.session_state.query = ""
         
         # ページを再読み込みして履歴を更新
         st.rerun()
