@@ -7,11 +7,8 @@ from langchain_community.llms import Ollama
 from langchain_community.vectorstores import PGVector
 from langchain_huggingface import HuggingFaceEmbeddings
 from dotenv import load_dotenv
-from langchain.chains import LLMChain, ConversationalRetrievalChain
-from langchain.chains.combine_documents.stuff import StuffDocumentsChain
+from langchain.chains import ConversationalRetrievalChain
 from langchain.callbacks.base import BaseCallbackHandler
-from langchain.schema import LLMResult
-from langchain.chat_models import ChatOpenAI
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 import time
 import os
@@ -206,7 +203,7 @@ def main():
     available_models = get_available_models()
 
     if not available_models:
-        st.warning("利用可能なLLMモデルが見つかりません。Ollamaを使用してローカルにモデルをダウンロードしてください。")
+        st.warning("利用可能なLLMモデルが見つかりません。Ollamaを使用してローカルにモデルをダウンロー���してください。")
         st.stop()  # これ以降の処理を停止
 
     # 初回実行時または選択されたモデルが利用可能でない場合、最初のモデルを選択
