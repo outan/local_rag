@@ -16,6 +16,8 @@ from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 import time
 import os
 import requests
+import psycopg2
+import json
 
 # 警告を無視
 warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
@@ -149,20 +151,54 @@ def get_available_models():
         st.error(f"Ollamaからモデルリストを取得できませんでした: {str(e)}")
         return []
 
+# データベース接続関数
+def get_db_connection():
+    return psycopg2.connect(CONNECTION_STRING)
+
+# 会話履歴をデータベースに保存する関数を修正
+def save_conversation_history(rag_conversation_history, no_rag_conversation_history, processing_times):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # 既存のデータを削除
+    cur.execute("DELETE FROM conversation_history")
+    # 新しいデータを挿入
+    cur.execute("""
+        INSERT INTO conversation_history (rag_conversation_history, no_rag_conversation_history, processing_times)
+        VALUES (%s, %s, %s)
+    """, (json.dumps(rag_conversation_history), json.dumps(no_rag_conversation_history), json.dumps(processing_times)))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+# データベースから会話履歴を読み込む関数を修正
+def load_conversation_history():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT rag_conversation_history, no_rag_conversation_history, processing_times FROM conversation_history ORDER BY id DESC LIMIT 1")
+    result = cur.fetchone()
+    cur.close()
+    conn.close()
+    if result:
+        return json.loads(result[0]), json.loads(result[1]), json.loads(result[2])
+    return [], [], []
+
+# llm_historyを動的に生成する関数を修正
+def generate_llm_history(conversation_history, use_rag=True):
+    if use_rag:
+        return [(query, answer) for query, answer in conversation_history]
+    else:
+        return [(query, answer) for query, answer in conversation_history]
+
 def main():
     st.set_page_config(layout="wide")  # ページ全体を広く使用
     
     st.title("RAGシステム")
 
-    # セッション状態の初期化
-    if 'conversation_history' not in st.session_state:
-        st.session_state.conversation_history = []
-    if 'llm_history' not in st.session_state:
-        st.session_state.llm_history = []
+    # セッション状態の初期化を修正
+    if 'rag_conversation_history' not in st.session_state or 'no_rag_conversation_history' not in st.session_state or 'processing_times' not in st.session_state:
+        st.session_state.rag_conversation_history, st.session_state.no_rag_conversation_history, st.session_state.processing_times = load_conversation_history()
     if 'query' not in st.session_state:
         st.session_state.query = ""
-    if 'processing_times' not in st.session_state:
-        st.session_state.processing_times = []
     if 'selected_model' not in st.session_state:
         st.session_state.selected_model = None
 
@@ -187,19 +223,24 @@ def main():
 
     # クリアボタンを追加
     if st.sidebar.button("会話履歴をクリア"):
-        st.session_state.conversation_history = []
-        st.session_state.llm_history = []
+        st.session_state.rag_conversation_history = []
+        st.session_state.no_rag_conversation_history = []
         st.session_state.processing_times = []
+        save_conversation_history([], [], [])
         st.rerun()
 
     vectorstore = load_vectorstore()
     
     llm = Ollama(model=st.session_state.selected_model, temperature=0.7, base_url=OLLAMA_BASE_URL)
 
-    # 会話履歴の表示
-    for i, (query, no_rag_answer, rag_answer) in enumerate(st.session_state.conversation_history):
+    # 会話履歴の表示を修正
+    for i in range(max(len(st.session_state.rag_conversation_history), len(st.session_state.no_rag_conversation_history))):
         st.subheader(f"質問 {i+1}")
-        st.write(query)
+        
+        rag_query, rag_answer = st.session_state.rag_conversation_history[i] if i < len(st.session_state.rag_conversation_history) else ("", "")
+        no_rag_query, no_rag_answer = st.session_state.no_rag_conversation_history[i] if i < len(st.session_state.no_rag_conversation_history) else ("", "")
+        
+        st.write(rag_query or no_rag_query)
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("**RAGを利用しない回答**")
@@ -247,7 +288,8 @@ def main():
                     no_rag_stdout_handler = StreamingStdOutCallbackHandler()
                     no_rag_combined_handler = CombinedStreamHandler(no_rag_streamlit_handler, no_rag_stdout_handler)
                     
-                    no_rag_answer, no_rag_time = get_no_rag_answer(llm, query, no_rag_combined_handler, st.session_state.llm_history)
+                    no_rag_llm_history = generate_llm_history(st.session_state.no_rag_conversation_history, use_rag=False)
+                    no_rag_answer, no_rag_time = get_no_rag_answer(llm, query, no_rag_combined_handler, no_rag_llm_history)
                     
                     st.markdown("**処理時間:**")
                     st.write(f"回答生成: {no_rag_time:.4f}秒")
@@ -266,7 +308,8 @@ def main():
                     rag_stdout_handler = StreamingStdOutCallbackHandler()
                     rag_combined_handler = CombinedStreamHandler(rag_streamlit_handler, rag_stdout_handler)
                     
-                    rag_answer, _, llm_time = generate_response(query, st.session_state.llm_history, vectorstore, llm, rag_combined_handler, retrieved_chunks)
+                    rag_llm_history = generate_llm_history(st.session_state.rag_conversation_history, use_rag=True)
+                    rag_answer, _, llm_time = generate_response(query, rag_llm_history, vectorstore, llm, rag_combined_handler, retrieved_chunks)
                     
                     st.markdown("**処理時間:**")
                     st.write(f"ベクトル変換: {vector_time:.4f}秒")
@@ -288,12 +331,15 @@ def main():
                     st.write(doc.metadata['source'])
 
             # 会話履歴と処理時間をセッション状態に追加
-            st.session_state.conversation_history.append((query, no_rag_answer, rag_answer))
-            st.session_state.llm_history.append((query, rag_answer))
+            st.session_state.rag_conversation_history.append((query, rag_answer))
+            st.session_state.no_rag_conversation_history.append((query, no_rag_answer))
             st.session_state.processing_times.append((no_rag_time, vector_time, retrieval_time, llm_time))
+            
+            # データベースに最新の履歴のみを保存
+            save_conversation_history(st.session_state.rag_conversation_history, st.session_state.no_rag_conversation_history, st.session_state.processing_times)
         
         except Exception as e:
-            st.error(f"エラーが発生しました: {str(e)}")
+            st.error(f"エラが発生しました: {str(e)}")
             print(f"詳細なエラー情報: {e}")  # デバッグ用にコンソールに詳細を出力
         
         finally:
