@@ -177,7 +177,7 @@ def main():
     if st.session_state.selected_model not in available_models:
         st.session_state.selected_model = available_models[0]
 
-    # サイドバーにモデル選択ウィジェットを追加
+    # サイドバーにモデル選択ウィジェットとクリアボタンを追加
     st.sidebar.title("LLMモデル選択")
     selected_model = st.sidebar.selectbox(
         "使用するLLMモデルを選択してください：",
@@ -185,9 +185,8 @@ def main():
         index=available_models.index(st.session_state.selected_model)
     )
 
-    # モデルが変更された場合、セッション状態を更新
-    if selected_model != st.session_state.selected_model:
-        st.session_state.selected_model = selected_model
+    # クリアボタンを追加
+    if st.sidebar.button("会話履歴をクリア"):
         st.session_state.conversation_history = []
         st.session_state.llm_history = []
         st.session_state.processing_times = []
