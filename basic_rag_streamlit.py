@@ -83,8 +83,6 @@ class CombinedStreamHandler(BaseCallbackHandler):
         self.text += token
 
 def get_chunks(query, vectorstore):
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-    
     # ベクトル変換の時間計測
     start_time = time.time()
     query_vector = vectorstore.embedding_function.embed_query(query)
@@ -92,14 +90,15 @@ def get_chunks(query, vectorstore):
     
     # ベクターデータベースからの関連情報検索の時間計測
     start_time = time.time()
-    docs = retriever.get_relevant_documents(query)
+    docs_and_scores = vectorstore.similarity_search_with_score(query, k=3)
     retrieval_time = time.time() - start_time
     
-    # 取得されたチャンクの内容を保存
-    retrieved_chunks = [doc.page_content for doc in docs]
+    # 取得されたチャンクの内容とスコアを保存（最大3件まで）
+    retrieved_chunks = [(doc.page_content, score) for doc, score in docs_and_scores]
     print(f"Retrieved chunks: {retrieved_chunks}")  # デバッグ用
+    print(f"Number of retrieved chunks: {len(retrieved_chunks)}")  # デバッグ用
     
-    return retrieved_chunks, vector_time, retrieval_time, docs
+    return retrieved_chunks, vector_time, retrieval_time, [doc for doc, _ in docs_and_scores]
 
 def generate_response(query, chat_history, vectorstore, llm, combined_handler, retrieved_chunks):
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
@@ -130,7 +129,7 @@ def generate_response(query, chat_history, vectorstore, llm, combined_handler, r
 
     # LLMでの回答生成の時間計測
     start_time = time.time()
-    result = chain({"question": query, "chat_history": chat_history, "context": "\n\n".join(retrieved_chunks)}, callbacks=[combined_handler])
+    result = chain({"question": query, "chat_history": chat_history, "context": "\n\n".join([chunk for chunk, _ in retrieved_chunks])}, callbacks=[combined_handler])
     llm_time = time.time() - start_time
     
     return combined_handler.text, result['source_documents'], llm_time
@@ -203,7 +202,7 @@ def main():
     available_models = get_available_models()
 
     if not available_models:
-        st.warning("利用可能なLLMモデルが見つかりません。Ollamaを使用してローカルにモデルをダウンロー���してください。")
+        st.warning("利用可能なLLMモデルが見つかりません。Ollamaを使用してローカルにモデルをダウンロードしてください。")
         st.stop()  # これ以降の処理を停止
 
     # 初回実行時または選択されたモデルが利用可能でない場合、最初のモデルを選択
@@ -317,9 +316,10 @@ def main():
                     
                     # チャンクの表示
                     st.subheader("取得されたチャンク:")
-                    for i, chunk in enumerate(retrieved_chunks):
+                    for i, (chunk, score) in enumerate(retrieved_chunks):
                         st.markdown(f"**チャンク {i+1}:**")
-                        st.write(chunk)
+                        st.markdown(f"<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px;'>{chunk}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='background-color: #e6f3ff; padding: 5px; border-radius: 5px; display: inline-block; margin-top: 5px;'><strong>Similarity Score:</strong> <span style='color: #0066cc; font-size: 1.2em;'>{score:.4f}</span></div>", unsafe_allow_html=True)
                         st.markdown("---")
 
                 # 参照元の表示
