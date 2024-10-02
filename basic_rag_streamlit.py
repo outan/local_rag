@@ -83,14 +83,7 @@ class CombinedStreamHandler(BaseCallbackHandler):
         self.text += token
 
 def get_chunks(query, vectorstore):
-    # スコアに基づくフィルタリングを行うリトリーバーを作成
-    retriever = vectorstore.as_retriever(
-        search_type="similarity_score_threshold",
-        search_kwargs={
-            "k": 10,  # 最初に多めに取得
-            "score_threshold": 0.7,  # スコアのしきい値（0.0〜1.0の範囲で調整）
-        }
-    )
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     
     # ベクトル変換の時間計測
     start_time = time.time()
@@ -102,21 +95,14 @@ def get_chunks(query, vectorstore):
     docs = retriever.get_relevant_documents(query)
     retrieval_time = time.time() - start_time
     
-    # 取得されたチャンクの内容を保存（最大3件まで）
-    retrieved_chunks = [doc.page_content for doc in docs[:3]]
+    # 取得されたチャンクの内容を保存
+    retrieved_chunks = [doc.page_content for doc in docs]
     print(f"Retrieved chunks: {retrieved_chunks}")  # デバッグ用
-    print(f"Number of retrieved chunks: {len(retrieved_chunks)}")  # デバッグ用
     
-    return retrieved_chunks, vector_time, retrieval_time, docs[:3]
+    return retrieved_chunks, vector_time, retrieval_time, docs
 
 def generate_response(query, chat_history, vectorstore, llm, combined_handler, retrieved_chunks):
-    retriever = vectorstore.as_retriever(
-        search_type="similarity_score_threshold",
-        search_kwargs={
-            "k": 10,
-            "score_threshold": 0.7,
-        }
-    )
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     
     prompt_template = """以下の情報を参考にして、クエリに日本語で答えてください。回答は必ず日本語でお願いします。
     簡潔かつ分かりやすく説明してください。専門用語は必要に応じて説明を加えてください。
@@ -183,21 +169,14 @@ def save_conversation_history(rag_conversation_history, no_rag_conversation_hist
 
 # データベースから会話履歴を読み込む関数を修正
 def load_conversation_history():
-    print("Attempting to load conversation history...")  # デバッグ用
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT rag_conversation_history, no_rag_conversation_history, processing_times FROM conversation_history ORDER BY id DESC LIMIT 1")
     result = cur.fetchone()
     cur.close()
     conn.close()
-    print(f"Raw result from database: {result}")  # デバッグ用
     if result:
-        print(f"Types of result: {[type(item) for item in result]}")  # デバッグ用
-        # 各フィールドの型をチェックし、適切に処理する
-        rag_history = json.loads(result[0]) if isinstance(result[0], str) else (result[0] if isinstance(result[0], list) else [])
-        no_rag_history = json.loads(result[1]) if isinstance(result[1], str) else (result[1] if isinstance(result[1], list) else [])
-        processing_times = json.loads(result[2]) if isinstance(result[2], str) else (result[2] if isinstance(result[2], list) else [])
-        return rag_history, no_rag_history, processing_times
+        return json.loads(result[0]), json.loads(result[1]), json.loads(result[2])
     return [], [], []
 
 # llm_historyを動的に生成する関数を修正
@@ -224,7 +203,7 @@ def main():
     available_models = get_available_models()
 
     if not available_models:
-        st.warning("利用可能なLLMモデルが見つかりません。Ollamaを使用してローカルにモデルをダウンロードしてください。")
+        st.warning("利用可能なLLMモデルが見つかりません。Ollamaを使用してローカルにモデルをダウンロー���してください。")
         st.stop()  # これ以降の処理を停止
 
     # 初回実行時または選択されたモデルが利用可能でない場合、最初のモデルを選択
