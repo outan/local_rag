@@ -82,7 +82,7 @@ class CombinedStreamHandler(BaseCallbackHandler):
         self.stdout_handler.on_llm_new_token(token, **kwargs)
         self.text += token
 
-def get_chunks(query, vectorstore):
+def get_chunks(query, vectorstore, user_role):
     # ベクトル変換の時間計測
     start_time = time.time()
     query_vector = vectorstore.embedding_function.embed_query(query)
@@ -90,7 +90,14 @@ def get_chunks(query, vectorstore):
     
     # ベクターデータベースからの関連情報検索の時間計測
     start_time = time.time()
-    docs_and_scores = vectorstore.similarity_search_with_score(query, k=3)
+    if user_role == "manager":
+        docs_and_scores = vectorstore.similarity_search_with_score(query, k=3)
+    else:
+        docs_and_scores = vectorstore.similarity_search_with_score(
+            query,
+            k=3,
+            filter={"access_level": "general"}
+        )
     retrieval_time = time.time() - start_time
     
     # スコアを変換（1 - score）して、値が大きいほど類似度が高くなるようにする
@@ -100,8 +107,11 @@ def get_chunks(query, vectorstore):
     
     return retrieved_chunks, vector_time, retrieval_time, [doc for doc, _ in docs_and_scores]
 
-def generate_response(query, chat_history, vectorstore, llm, combined_handler, retrieved_chunks):
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+def generate_response(query, chat_history, vectorstore, llm, combined_handler, retrieved_chunks, user_role):
+    if user_role == "manager":
+        retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    else:
+        retriever = vectorstore.as_retriever(search_kwargs={"k": 3, "filter": {"access_level": "general"}})
     
     prompt_template = """以下の情報を参考にして、クエリに日本語で答えてください。回答は必ず日本語でお願いします。
     簡潔かつ分かりやすく説明してください。専門用語は必要に応じて説明を加えてください。
@@ -152,25 +162,25 @@ def get_db_connection():
     return psycopg2.connect(CONNECTION_STRING)
 
 # 会話履歴をデータベースに保存する関数を修正
-def save_conversation_history(rag_conversation_history, no_rag_conversation_history, processing_times):
+def save_conversation_history(rag_conversation_history, no_rag_conversation_history, processing_times, user_role):
     conn = get_db_connection()
     cur = conn.cursor()
-    # 既存のデータを削除
-    cur.execute("DELETE FROM conversation_history")
+    # 既存のデータを削除（ユーザーロールに基づいて）
+    cur.execute("DELETE FROM conversation_history WHERE user_role = %s", (user_role,))
     # 新しいデータを挿入
     cur.execute("""
-        INSERT INTO conversation_history (rag_conversation_history, no_rag_conversation_history, processing_times)
-        VALUES (%s, %s, %s)
-    """, (json.dumps(rag_conversation_history), json.dumps(no_rag_conversation_history), json.dumps(processing_times)))
+        INSERT INTO conversation_history (rag_conversation_history, no_rag_conversation_history, processing_times, user_role)
+        VALUES (%s, %s, %s, %s)
+    """, (json.dumps(rag_conversation_history), json.dumps(no_rag_conversation_history), json.dumps(processing_times), user_role))
     conn.commit()
     cur.close()
     conn.close()
 
 # データベースから会話履歴を読み込む関数を修正
-def load_conversation_history():
+def load_conversation_history(user_role):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT rag_conversation_history, no_rag_conversation_history, processing_times FROM conversation_history ORDER BY id DESC LIMIT 1")
+    cur.execute("SELECT rag_conversation_history, no_rag_conversation_history, processing_times FROM conversation_history WHERE user_role = %s ORDER BY id DESC LIMIT 1", (user_role,))
     result = cur.fetchone()
     cur.close()
     conn.close()
@@ -194,20 +204,24 @@ def main():
     
     st.title("RAGシステム")
 
-    # セッション状態の初期化を修正
-    if 'rag_conversation_history' not in st.session_state or 'no_rag_conversation_history' not in st.session_state or 'processing_times' not in st.session_state:
-        st.session_state.rag_conversation_history, st.session_state.no_rag_conversation_history, st.session_state.processing_times = load_conversation_history()
-    if 'query' not in st.session_state:
-        st.session_state.query = ""
-    if 'selected_model' not in st.session_state:
-        st.session_state.selected_model = None
-
     # 利用可能なモデルのリストを取得
     available_models = get_available_models()
 
     if not available_models:
         st.warning("利用可能なLLMモデルが見つかりません。Ollamaを使用してローカルにモデルをダウンロードしてください。")
         st.stop()  # これ以降の処理を停止
+
+    # ユーザーロールの選択を追加（この行を上に移動）
+    user_role = st.sidebar.selectbox("ユーザーロール", ["employee", "manager"])
+
+    # セッション状態の初期化を修正
+    if 'rag_conversation_history' not in st.session_state or 'no_rag_conversation_history' not in st.session_state or 'processing_times' not in st.session_state or 'user_role' not in st.session_state or st.session_state.user_role != user_role:
+        st.session_state.rag_conversation_history, st.session_state.no_rag_conversation_history, st.session_state.processing_times = load_conversation_history(user_role)
+        st.session_state.user_role = user_role
+    if 'query' not in st.session_state:
+        st.session_state.query = ""
+    if 'selected_model' not in st.session_state:
+        st.session_state.selected_model = None
 
     # 初回実行時または選択されたモデルが利用可能でない場合、最初のモデルを選択
     if st.session_state.selected_model not in available_models:
@@ -226,7 +240,7 @@ def main():
         st.session_state.rag_conversation_history = []
         st.session_state.no_rag_conversation_history = []
         st.session_state.processing_times = []
-        save_conversation_history([], [], [])
+        save_conversation_history([], [], [], user_role)
         st.rerun()
 
     vectorstore = load_vectorstore()
@@ -298,8 +312,8 @@ def main():
                     
                     st.markdown("---")
                     
-                    # チャンクの取得
-                    retrieved_chunks, vector_time, retrieval_time, source_docs = get_chunks(query, vectorstore)
+                    # チャンクの取得（ユーザーロールを渡す）
+                    retrieved_chunks, vector_time, retrieval_time, source_docs = get_chunks(query, vectorstore, user_role)
                     
                     # RAGを利用する回答のストリーミング
                     st.markdown("**RAGを利用した回答：**")
@@ -309,7 +323,7 @@ def main():
                     rag_combined_handler = CombinedStreamHandler(rag_streamlit_handler, rag_stdout_handler)
                     
                     rag_llm_history = generate_llm_history(st.session_state.rag_conversation_history, use_rag=True)
-                    rag_answer, _, llm_time = generate_response(query, rag_llm_history, vectorstore, llm, rag_combined_handler, retrieved_chunks)
+                    rag_answer, _, llm_time = generate_response(query, rag_llm_history, vectorstore, llm, rag_combined_handler, retrieved_chunks, user_role)
                     
                     st.markdown("**処理時間:**")
                     st.write(f"ベクトル変換: {vector_time:.4f}秒")
@@ -336,8 +350,8 @@ def main():
             st.session_state.no_rag_conversation_history.append((query, no_rag_answer))
             st.session_state.processing_times.append((no_rag_time, vector_time, retrieval_time, llm_time))
             
-            # データベースに最新の履歴のみを保存
-            save_conversation_history(st.session_state.rag_conversation_history, st.session_state.no_rag_conversation_history, st.session_state.processing_times)
+            # データベースに最新の履歴のみを保存（ユーザーロールを含む）
+            save_conversation_history(st.session_state.rag_conversation_history, st.session_state.no_rag_conversation_history, st.session_state.processing_times, user_role)
         
         except Exception as e:
             st.error(f"エラが発生しました: {str(e)}")

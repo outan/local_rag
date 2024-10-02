@@ -35,6 +35,11 @@ def load_and_split_text(file_path, chunk_size=500, chunk_overlap=50):
     text_splitter = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     texts = text_splitter.split_documents(documents)
 
+    # ファイル名に基づいてアクセスレベルを設定
+    access_level = "confidential" if "confidential" in os.path.basename(file_path).lower() else "general"
+    for text in texts:
+        text.metadata["access_level"] = access_level
+
     return texts
 
 def prepare_vectorstore(folder_path):

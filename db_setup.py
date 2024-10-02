@@ -18,13 +18,16 @@ def create_tables():
     conn = psycopg2.connect(CONNECTION_STRING)
     cur = conn.cursor()
     
+    # テーブルが存在しない場合のみ作成
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS conversation_history (
-            id SERIAL PRIMARY KEY,
-            rag_conversation_history JSONB,
-            no_rag_conversation_history JSONB,
-            processing_times JSONB
-        )
+    CREATE TABLE IF NOT EXISTS conversation_history (
+        id SERIAL PRIMARY KEY,
+        rag_conversation_history JSON,
+        no_rag_conversation_history JSON,
+        processing_times JSON,
+        user_role VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
     """)
     
     conn.commit()
