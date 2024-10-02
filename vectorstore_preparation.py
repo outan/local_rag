@@ -46,7 +46,7 @@ def prepare_vectorstore(folder_path):
             all_texts.extend(texts)
 
     # 埋め込みモデルの設定
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
 
     vectorstore = PGVector.from_documents(
         documents=all_texts,
