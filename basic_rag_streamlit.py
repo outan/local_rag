@@ -93,8 +93,8 @@ def get_chunks(query, vectorstore):
     docs_and_scores = vectorstore.similarity_search_with_score(query, k=3)
     retrieval_time = time.time() - start_time
     
-    # 取得されたチャンクの内容とスコアを保存（最大3件まで）
-    retrieved_chunks = [(doc.page_content, score) for doc, score in docs_and_scores]
+    # スコアを変換（1 - score）して、値が大きいほど類似度が高くなるようにする
+    retrieved_chunks = [(doc.page_content, 1 - score) for doc, score in docs_and_scores]
     print(f"Retrieved chunks: {retrieved_chunks}")  # デバッグ用
     print(f"Number of retrieved chunks: {len(retrieved_chunks)}")  # デバッグ用
     
