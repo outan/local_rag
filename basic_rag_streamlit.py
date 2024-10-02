@@ -175,7 +175,11 @@ def load_conversation_history():
     cur.close()
     conn.close()
     if result:
-        return json.loads(result[0]), json.loads(result[1]), json.loads(result[2])
+        return (
+            json.loads(result[0]) if isinstance(result[0], str) else result[0],
+            json.loads(result[1]) if isinstance(result[1], str) else result[1],
+            json.loads(result[2]) if isinstance(result[2], str) else result[2]
+        )
     return [], [], []
 
 # llm_historyを動的に生成する関数を修正
