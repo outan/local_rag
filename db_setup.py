@@ -18,7 +18,9 @@ def create_tables():
     conn = psycopg2.connect(CONNECTION_STRING)
     cur = conn.cursor()
     
-    # テーブルが存在しない場合のみ作成
+    tables_created = []
+
+    # conversation_historyテーブルの作成
     cur.execute("""
     CREATE TABLE IF NOT EXISTS conversation_history (
         id SERIAL PRIMARY KEY,
@@ -29,11 +31,25 @@ def create_tables():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
+    tables_created.append("conversation_history")
+    
+    # file_hashesテーブルの作成
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS file_hashes (
+        file_path TEXT PRIMARY KEY,
+        file_hash TEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    tables_created.append("file_hashes")
     
     conn.commit()
     cur.close()
     conn.close()
-    print("テーブルが正常に作成されました。")
+
+    # 作成されたテーブルの一覧を表示
+    for table in tables_created:
+        print(f"{table}テーブルが正常に作成されました。")
 
 if __name__ == "__main__":
     create_tables()
