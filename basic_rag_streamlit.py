@@ -7,7 +7,7 @@ from langchain_community.llms import Ollama
 from langchain_community.vectorstores import PGVector
 from langchain_huggingface import HuggingFaceEmbeddings
 from dotenv import load_dotenv
-from langchain.chains import ConversationalRetrievalChain
+from langchain.chains import ConversationalRetrievalChain, LLMChain
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 import time
@@ -107,12 +107,7 @@ def get_chunks(query, vectorstore, user_role):
     
     return retrieved_chunks, vector_time, retrieval_time, [doc for doc, _ in docs_and_scores]
 
-def generate_response(query, chat_history, vectorstore, llm, combined_handler, retrieved_chunks, user_role):
-    if user_role == "manager":
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-    else:
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 3, "filter": {"access_level": "general"}})
-    
+def generate_response(query, chat_history, llm, combined_handler, retrieved_chunks):
     prompt_template = """以下の情報を参考にして、クエリに日本語で答えてください。回答は必ず日本語でお願いします。
     簡潔かつ分かりやすく説明してください。専門用語は必要に応じて説明を加えてください。
     英語での回答は避け、日本語のみで回答してください。
@@ -130,19 +125,14 @@ def generate_response(query, chat_history, vectorstore, llm, combined_handler, r
         template=prompt_template, input_variables=["context", "question", "chat_history"]
     )
     
-    chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=retriever,
-        return_source_documents=True,
-        combine_docs_chain_kwargs={"prompt": PROMPT}
-    )
+    chain = LLMChain(llm=llm, prompt=PROMPT)
 
-    # LLMでの回答生成の時間計測
     start_time = time.time()
-    result = chain({"question": query, "chat_history": chat_history, "context": "\n\n".join([chunk for chunk, _ in retrieved_chunks])}, callbacks=[combined_handler])
+    context = "\n\n".join([chunk for chunk, _ in retrieved_chunks])
+    result = chain.run({"question": query, "chat_history": chat_history, "context": context}, callbacks=[combined_handler])
     llm_time = time.time() - start_time
     
-    return combined_handler.text, result['source_documents'], llm_time
+    return combined_handler.text, retrieved_chunks, llm_time
 
 def get_available_models():
     try:
@@ -323,7 +313,7 @@ def main():
                     rag_combined_handler = CombinedStreamHandler(rag_streamlit_handler, rag_stdout_handler)
                     
                     rag_llm_history = generate_llm_history(st.session_state.rag_conversation_history, use_rag=True)
-                    rag_answer, _, llm_time = generate_response(query, rag_llm_history, vectorstore, llm, rag_combined_handler, retrieved_chunks, user_role)
+                    rag_answer, source_chunks, llm_time = generate_response(query, rag_llm_history, llm, rag_combined_handler, retrieved_chunks)
                     
                     st.markdown("**処理時間:**")
                     st.write(f"ベクトル変換: {vector_time:.4f}秒")
@@ -334,7 +324,7 @@ def main():
                     
                     # チャンクの表示
                     st.subheader("取得されたチャンク:")
-                    for i, (chunk, score) in enumerate(retrieved_chunks):
+                    for i, (chunk, score) in enumerate(source_chunks):
                         st.markdown(f"**チャンク {i+1}:**")
                         st.markdown(f"<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px;'>{chunk}</div>", unsafe_allow_html=True)
                         st.markdown(f"<div style='background-color: #e6f3ff; padding: 5px; border-radius: 5px; display: inline-block; margin-top: 5px;'><strong>Similarity Score:</strong> <span style='color: #0066cc; font-size: 1.2em;'>{score:.4f}</span></div>", unsafe_allow_html=True)
