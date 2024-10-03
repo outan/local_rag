@@ -9,6 +9,7 @@ from transformers import logging as transformers_logging
 from dotenv import load_dotenv
 import psycopg2
 import hashlib
+import uuid
 
 # 環境変数を読み込む
 load_dotenv()
@@ -73,6 +74,7 @@ def load_and_split_text(file_path, chunk_size=500, chunk_overlap=50):
     access_level = "confidential" if "confidential" in os.path.basename(file_path).lower() else "general"
     for text in texts:
         text.metadata["access_level"] = access_level
+        text.metadata["source"] = file_path  # ソースファイルのパスを追加
 
     return texts
 
@@ -80,10 +82,12 @@ def prepare_vectorstore(folder_path):
     updated_texts = []
     stored_hashes = get_stored_file_hashes()
     updated_files = []
+    all_files = []
 
     for filename in os.listdir(folder_path):
         if filename.endswith('.txt') or filename.endswith('.md'):
             file_path = os.path.join(folder_path, filename)
+            all_files.append(file_path)
             current_hash = get_file_hash(file_path)
             
             if file_path not in stored_hashes or stored_hashes[file_path] != current_hash:
@@ -91,8 +95,11 @@ def prepare_vectorstore(folder_path):
                 updated_texts.extend(texts)
                 update_file_hash(file_path, current_hash)
                 updated_files.append(file_path)
-
-    if not updated_files:
+    # 更新されたファイルがなく、削除されたファイルもない場合
+    no_updated_files = not updated_files
+    no_deleted_files = not set(stored_hashes.keys()) - set(all_files)
+    
+    if no_updated_files and no_deleted_files:
         print("変更されたファイルはありません。ベクトルストアの更新は不要です。")
         return None
 
@@ -108,10 +115,73 @@ def prepare_vectorstore(folder_path):
         collection_name="your_collection_name"
     )
 
-    # 更新されたドキュメントのみを追加
-    vectorstore.add_documents(updated_texts)
+    # 削除されたファイルの古いデータを削除
+    deleted_files = set(stored_hashes.keys()) - set(all_files)
+    for file_path in deleted_files:
+        delete_embeddings_for_file(file_path)
+
+    # 更新されたファイルの古いデータを削除
+    for file_path in updated_files:
+        delete_embeddings_for_file(file_path)
+
+    # 更新されたドキュメントを追加
+    if updated_texts:
+        vectorstore.add_documents(updated_texts)
+        print(f"新しいデータを追加: {len(updated_texts)}件")
+
+    # 不要になったファイルハッシュをデータベースから削除
+    remove_unused_file_hashes(all_files)
 
     return vectorstore
+
+def delete_embeddings_for_file(file_path):
+    """ファイルパスに関連する埋め込みを削除する"""
+    conn = psycopg2.connect(CONNECTION_STRING)
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                DELETE FROM langchain_pg_embedding
+                WHERE cmetadata->>'source' = %s
+            """, (file_path,))
+            deleted_count = cursor.rowcount
+        conn.commit()
+        if deleted_count > 0:
+            print(f"ファイル '{file_path}' の埋め込みを {deleted_count} 件削除しました。")
+    except Exception as e:
+        print(f"ファイル '{file_path}' の埋め込み削除中にエラーが発生しました: {str(e)}")
+        conn.rollback()
+    finally:
+        conn.close()
+
+def get_uuids_for_file(file_path):
+    # ファイルパスに関連するUUIDを取得するクエリ
+    query = """
+    SELECT uuid FROM langchain_pg_embedding
+    WHERE cmetadata->>'source' = %s
+    """
+    conn = psycopg2.connect(CONNECTION_STRING)
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query, (file_path,))
+            results = cursor.fetchall()
+        return [str(result[0]) for result in results]
+    finally:
+        conn.close()
+
+def remove_unused_file_hashes(current_files):
+    conn = psycopg2.connect(CONNECTION_STRING)
+    cur = conn.cursor()
+    cur.execute("SELECT file_path FROM file_hashes")
+    stored_files = [row[0] for row in cur.fetchall()]
+    
+    files_to_remove = set(stored_files) - set(current_files)
+    for file_path in files_to_remove:
+        cur.execute("DELETE FROM file_hashes WHERE file_path = %s", (file_path,))
+        print(f"不要なファイルハッシュを削除: {file_path}")
+    
+    conn.commit()
+    cur.close()
+    conn.close()
 
 if __name__ == "__main__":
     import sys
@@ -137,4 +207,4 @@ if __name__ == "__main__":
     # ベクトルストアの作成確認
     print("ベクトルストアが正常に作成されました。")
     print(f"接続文字列: {CONNECTION_STRING}")
-    print(f"コレクション名: {vectorstore.collection_name}")
+    
