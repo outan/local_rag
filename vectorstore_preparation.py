@@ -2,14 +2,15 @@ import os
 import warnings
 from urllib3.exceptions import NotOpenSSLWarning
 from langchain_community.document_loaders import TextLoader
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.text_splitter import MarkdownHeaderTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import PGVector
 from transformers import logging as transformers_logging
 from dotenv import load_dotenv
 import psycopg2
 import hashlib
-import uuid
+import json
+from langchain_community.docstore.document import Document
 
 # 環境変数を読み込む
 load_dotenv()
@@ -61,22 +62,61 @@ def update_file_hash(file_path, file_hash):
     cur.close()
     conn.close()
 
-def load_and_split_text(file_path, chunk_size=500, chunk_overlap=50):
+def load_and_split_text(file_path):
     # データの読み込み
     loader = TextLoader(file_path)
     documents = loader.load()
 
-    # テキストの分割
-    text_splitter = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    texts = text_splitter.split_documents(documents)
+    # マークダウンヘッダーに基づいてテキストを分割
+    markdown_splitter = MarkdownHeaderTextSplitter(
+        headers_to_split_on=[
+            ("#", "Header 1"),
+            ("##", "Header 2"),
+            ("###", "Header 3"),
+        ]
+    )
+    md_header_splits = markdown_splitter.split_text(documents[0].page_content)
+
+    # コンテキストを追加
+    contextualized_chunks = add_context_to_chunks(md_header_splits)
 
     # ファイル名に基づいてアクセスレベルを設定
     access_level = "confidential" if "confidential" in os.path.basename(file_path).lower() else "general"
-    for text in texts:
-        text.metadata["access_level"] = access_level
-        text.metadata["source"] = file_path  # ソースファイルのパスを追加
+    for chunk in contextualized_chunks:
+        chunk.metadata["access_level"] = access_level
+        chunk.metadata["source"] = file_path  # ソースファイルのパスを追加
 
-    return texts
+    return contextualized_chunks
+
+def add_context_to_chunks(chunks):
+    contextualized_chunks = []
+    current_context = []
+    document_title = ""
+
+    for i, chunk in enumerate(chunks):
+        # ドキュメントのタイトルを取得（最初のチャンクの場合）
+        if i == 0 and "Header 1" in chunk.metadata:
+            document_title = chunk.metadata["Header 1"]
+            current_context.append(document_title)
+
+        # ヘッダーレベルを取得
+        header_level = max([int(k.split()[-1]) for k in chunk.metadata.keys() if k.startswith("Header")], default=0)
+        
+        # 現在のコンテキストを更新
+        while len(current_context) > header_level:
+            current_context.pop()
+        if header_level > 0:
+            current_context.append(chunk.metadata.get(f"Header {header_level}", ""))
+
+        # コンテキスト付きの新しいチャンクを作成
+        context_text = " > ".join(current_context)
+        new_content = f"{context_text}\n\n{chunk.page_content}"
+        new_metadata = chunk.metadata.copy()
+        new_metadata["context"] = context_text
+
+        contextualized_chunks.append(Document(page_content=new_content, metadata=new_metadata))
+
+    return contextualized_chunks
 
 def prepare_vectorstore(folder_path):
     updated_texts = []
@@ -95,6 +135,7 @@ def prepare_vectorstore(folder_path):
                 updated_texts.extend(texts)
                 update_file_hash(file_path, current_hash)
                 updated_files.append(file_path)
+
     # 更新されたファイルがなく、削除されたファイルもない場合
     no_updated_files = not updated_files
     no_deleted_files = not set(stored_hashes.keys()) - set(all_files)
@@ -207,4 +248,3 @@ if __name__ == "__main__":
     # ベクトルストアの作成確認
     print("ベクトルストアが正常に作成されました。")
     print(f"接続文字列: {CONNECTION_STRING}")
-    
