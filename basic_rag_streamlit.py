@@ -95,22 +95,26 @@ def split_query(query):
     print("有効なサブクエリを生成できませんでした。元のクエリを使用します。")
     return [query]  # 元のクエリをそのまま使用
 
-def get_filtered_chunks(query, user_role, k=3):
+# get_filtered_chunks関数を修正
+def get_filtered_chunks(subquery, user_role, k=3):
     if user_role == "manager":
-        docs_and_scores = vectorstore.similarity_search_with_score(query, k=k)
+        docs_and_scores = vectorstore.similarity_search_with_score(subquery, k=k)
     else:
         docs_and_scores = vectorstore.similarity_search_with_score(
-            query,
+            subquery,
             k=k,
             filter={"access_level": "general"}
         )
     
-    filtered_chunks = [(doc.page_content, score) for doc, score in docs_and_scores]
-    if DEBUG_MODE:
-        print(f"Retrieved chunks: {filtered_chunks}")
-        print(f"Number of retrieved chunks: {len(filtered_chunks)}")
+    # スコアを変換：1 - score
+    # 注意: スコアが非常に大きい場合、負の値になる可能性があるため、max関数を使用
+    filtered_chunks = [(doc.page_content, max(0, 1 - score)) for doc, score in docs_and_scores]
     
-    return filtered_chunks  # ここを修正：source_docsを返さないようにする
+    if DEBUG_MODE:
+        print(f"サブクエリ '{subquery}' に対する取得チャンク: {filtered_chunks}")
+        print(f"取得チャンク数: {len(filtered_chunks)}")
+    
+    return filtered_chunks
 
 def process_subquery(subquery, context, llm):
     response_prompt = PromptTemplate(
@@ -150,16 +154,20 @@ def combine_subquery_responses(responses, query):
     combined_context = chain.run({"responses": "\n\n".join(responses), "query": query})
     return combined_context
 
+# process_query_and_generate_final_answer関数を修正
 def process_query_and_generate_final_answer(query, chat_history, llm, combined_handler, user_role):
     start_time = time.time()
     subqueries = split_query(query)
     subquery_responses = []
+    all_retrieved_chunks = []
     total_retrieval_time = 0
     
     for subquery in subqueries:
         subquery_start_time = time.time()
         filtered_chunks = get_filtered_chunks(subquery, user_role, k=3)
         total_retrieval_time += time.time() - subquery_start_time
+        
+        all_retrieved_chunks.append((subquery, filtered_chunks))
         
         context = "\n".join([chunk for chunk, _ in filtered_chunks])
         response = process_subquery(subquery, context, llm)
@@ -192,7 +200,7 @@ def process_query_and_generate_final_answer(query, chat_history, llm, combined_h
     
     total_time = time.time() - start_time
     
-    return combined_handler.text, total_retrieval_time, llm_time, total_time
+    return combined_handler.text, total_retrieval_time, llm_time, total_time, all_retrieved_chunks
 
 def get_no_rag_answer(llm, query, combined_handler, chat_history):
     no_rag_prompt = """以下のクエリに日本語で簡潔に答えてください。専門用語は説明を加えてください。
@@ -410,7 +418,7 @@ def main():
                     rag_combined_handler = CombinedStreamHandler(rag_streamlit_handler, rag_stdout_handler)
                     
                     rag_llm_history = generate_llm_history(st.session_state.rag_conversation_history, use_rag=True)
-                    rag_answer, total_retrieval_time, llm_time, total_time = process_query_and_generate_final_answer(query, rag_llm_history, llm, rag_combined_handler, user_role)
+                    rag_answer, total_retrieval_time, llm_time, total_time, all_retrieved_chunks = process_query_and_generate_final_answer(query, rag_llm_history, llm, rag_combined_handler, user_role)
                     
                     st.markdown("**処理時間:**")
                     st.write(f"ベクトル変換: 0.0000秒")
@@ -426,35 +434,35 @@ def main():
                         st.write(f"{i+1}. {subquery}")
                     st.markdown("---")
                     
-                    # チャンクの取得（ユーザーロールを渡す）
-                    retrieved_chunks = get_filtered_chunks(query, user_role)
-                    
                     # チャンクの表示
                     st.subheader("取得されたチャンク:")
-                    for i, (chunk, score) in enumerate(retrieved_chunks):
-                        st.markdown(f"**チャンク {i+1}:**")
-                        st.markdown(f"<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px;'>{chunk}</div>", unsafe_allow_html=True)
-                        st.markdown(f"<div style='background-color: #e6f3ff; padding: 5px; border-radius: 5px; display: inline-block; margin-top: 5px;'><strong>Similarity Score:</strong> <span style='color: #0066cc; font-size: 1.2em;'>{score:.4f}</span></div>", unsafe_allow_html=True)
+                    for subquery, chunks in all_retrieved_chunks:
+                        st.markdown(f"**サブクエリ: {subquery}**")
+                        for i, (chunk, score) in enumerate(chunks):
+                            st.markdown(f"チャンク {i+1}:")
+                            st.markdown(f"<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px;'>{chunk}</div>", unsafe_allow_html=True)
+                            st.markdown(f"<div style='background-color: #e6f3ff; padding: 5px; border-radius: 5px; display: inline-block; margin-top: 5px;'><strong>Similarity Score:</strong> <span style='color: #0066cc; font-size: 1.2em;'>{score:.4f}</span></div>", unsafe_allow_html=True)
                         st.markdown("---")
+                    
+                    # 参照元の表示
+                    st.subheader("参照元:")
+                    for subquery, chunks in all_retrieved_chunks:
+                        for chunk, _ in chunks:
+                            if isinstance(chunk, str):
+                                st.write("テキストチャンク（メタデータなし）")
+                            else:
+                                st.write(chunk.metadata.get('source', '不明な参照元'))
 
-                # 参照元の表示
-                st.subheader("参照元:")
-                for chunk, _ in retrieved_chunks:
-                    if isinstance(chunk, str):
-                        st.write("テキストチャンク（メタデータなし）")
-                    else:
-                        st.write(chunk.metadata.get('source', '不明な参照元'))
-
-            # 会話履歴と処理時間をセッション状態に追加
-            st.session_state.rag_conversation_history.append((query, rag_answer))
-            st.session_state.no_rag_conversation_history.append((query, no_rag_answer))
-            st.session_state.processing_times.append((no_rag_time, 0, total_retrieval_time, llm_time))
-            
-            # データベースに最新の履歴のみを保存（ユーザーロールを含む）
-            save_conversation_history(st.session_state.rag_conversation_history, st.session_state.no_rag_conversation_history, st.session_state.processing_times, user_role)
+                # 会話履歴と処理時間をセッション状態に追加
+                st.session_state.rag_conversation_history.append((query, rag_answer))
+                st.session_state.no_rag_conversation_history.append((query, no_rag_answer))
+                st.session_state.processing_times.append((no_rag_time, 0, total_retrieval_time, llm_time))
+                
+                # データベースに最新の履歴のみを保存（ユーザーロールを含む）
+                save_conversation_history(st.session_state.rag_conversation_history, st.session_state.no_rag_conversation_history, st.session_state.processing_times, user_role)
         
         except Exception as e:
-            st.error(f"エラが発生しました: {str(e)}")
+            st.error(f"エラーが発生しました: {str(e)}")
             print(f"詳細なエラー情報: {e}")  # デバッグ用にコンソールに詳細を出力
         
         finally:
