@@ -127,7 +127,7 @@ def split_query(query):
     print("有効なサブクエリを生成できませんでした。元のクエリを使用します。")
     return [query]  # 元のクエリをそのまま使用
 
-def get_filtered_chunks(subquery, user_role, initial_k=10, final_k=3):
+def get_filtered_chunks(subquery, user_role, llm, use_llm_rerank=False, initial_k=10, final_k=3):
     if user_role == "manager":
         docs_and_scores = vectorstore.similarity_search_with_score(subquery, k=initial_k)
     else:
@@ -141,7 +141,10 @@ def get_filtered_chunks(subquery, user_role, initial_k=10, final_k=3):
     initial_chunks = [(doc.page_content, 1 - score) for doc, score in docs_and_scores]  # スコアを1 - scoreに変換
     
     # rerankモデルを使用してチャンクを並び替え
-    reranked_chunks = rerank_chunks(subquery, initial_chunks)
+    if use_llm_rerank:
+        reranked_chunks = rerank_chunks_with_llm(subquery, initial_chunks, llm)
+    else:
+        reranked_chunks = rerank_chunks(subquery, initial_chunks)
     
     # 上位final_k個のチャンクを選択
     filtered_chunks = reranked_chunks[:final_k]
@@ -161,6 +164,37 @@ def rerank_chunks(query, chunks, model_name='cross-encoder/ms-marco-MiniLM-L-12-
     normalized_scores = 1 / (1 + np.exp(-scores))
 
     reranked_chunks = [(chunk, float(score)) for (chunk, _), score in zip(chunks, normalized_scores)]
+    reranked_chunks.sort(key=lambda x: x[1], reverse=True)
+    return reranked_chunks
+
+def rerank_chunks_with_llm(query, chunks, llm):
+    rerank_prompt = PromptTemplate(
+        input_variables=["query", "chunk"],
+        template="""
+        クエリと文章の関連性を0から1の間のスコアで評価してください。
+        1に近いほど関連性が高く、0に近いほど関連性が低いことを示します。
+        回答は数値のみを返してください。
+
+        クエリ: {query}
+        文章: {chunk}
+
+        関連性スコア:
+        """
+    )
+    
+    reranked_chunks = []
+    for chunk, _ in chunks:
+        chain = LLMChain(llm=llm, prompt=rerank_prompt)
+        result = chain.run({"query": query, "chunk": chunk})
+        try:
+            score = float(result.strip())
+            # スコアが0-1の範囲外の場合、範囲内に収める
+            score = max(0, min(score, 1))
+        except ValueError:
+            print(f"警告: 無効なスコア '{result}'. デフォルト値0.5を使用します。")
+            score = 0.5
+        reranked_chunks.append((chunk, score))
+    
     reranked_chunks.sort(key=lambda x: x[1], reverse=True)
     return reranked_chunks
 
@@ -225,7 +259,7 @@ def combine_subquery_responses(responses, query):
     return combined_context
 
 # process_query_and_generate_final_answer関数を修正
-def process_query_and_generate_final_answer(query, chat_history, llm, combined_handler, user_role, subqueries):
+def process_query_and_generate_final_answer(query, chat_history, llm, combined_handler, user_role, subqueries, use_llm_rerank):
     start_time = time.time()
     print(f"process_query_and_generate_final_answer で使用されるサブクエリ: {subqueries}")  # デバッグ用
     subquery_responses = []
@@ -234,7 +268,7 @@ def process_query_and_generate_final_answer(query, chat_history, llm, combined_h
     
     for subquery in subqueries:
         subquery_start_time = time.time()
-        filtered_chunks = get_filtered_chunks(subquery, user_role)  # kを削除
+        filtered_chunks = get_filtered_chunks(subquery, user_role, llm, use_llm_rerank)
         total_retrieval_time += time.time() - subquery_start_time
         
         all_retrieved_chunks.append((subquery, filtered_chunks))
@@ -409,6 +443,9 @@ def main():
     # ユーザーロールの選択を追加（この行を上に移動）
     user_role = st.sidebar.selectbox("ユーザーロール", ["employee", "manager"])
 
+    # LLMを使用した再ランク付けのオプションを追加
+    use_llm_rerank = st.sidebar.checkbox("LLMを使用してrerankを行う", value=False)
+
     # セッション状態の初期化を修正
     if 'rag_conversation_history' not in st.session_state or 'no_rag_conversation_history' not in st.session_state or 'processing_times' not in st.session_state or 'user_role' not in st.session_state or st.session_state.user_role != user_role:
         st.session_state.rag_conversation_history, st.session_state.no_rag_conversation_history, st.session_state.processing_times = load_conversation_history(user_role)
@@ -504,7 +541,7 @@ def main():
                     rag_combined_handler = CombinedStreamHandler(rag_streamlit_handler, rag_stdout_handler)
                     
                     rag_llm_history = generate_llm_history(st.session_state.rag_conversation_history, use_rag=True)
-                    rag_answer, total_retrieval_time, llm_time, total_time, all_retrieved_chunks = process_query_and_generate_final_answer(query, rag_llm_history, llm, rag_combined_handler, user_role, subqueries)
+                    rag_answer, total_retrieval_time, llm_time, total_time, all_retrieved_chunks = process_query_and_generate_final_answer(query, rag_llm_history, llm, rag_combined_handler, user_role, subqueries, use_llm_rerank)
                     
                     st.markdown("**処理時間:**")
                     st.write(f"ベクトル変換: 0.0000秒")
