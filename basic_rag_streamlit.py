@@ -17,6 +17,7 @@ import psycopg2
 import json
 import re
 from sentence_transformers import CrossEncoder
+import numpy as np
 
 # 警告を無視
 warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
@@ -156,10 +157,9 @@ def rerank_chunks(query, chunks, model_name='cross-encoder/ms-marco-MiniLM-L-12-
     pairs = [[query, chunk] for chunk, _ in chunks]
     scores = reranker.predict(pairs)
     
-    # スコアを0-1の範囲に正規化
-    min_score, max_score = min(scores), max(scores)
-    normalized_scores = [(score - min_score) / (max_score - min_score) for score in scores]
-    
+    # シグモイド関数を使用してスコアを変換
+    normalized_scores = 1 / (1 + np.exp(-scores))
+
     reranked_chunks = [(chunk, float(score)) for (chunk, _), score in zip(chunks, normalized_scores)]
     reranked_chunks.sort(key=lambda x: x[1], reverse=True)
     return reranked_chunks
