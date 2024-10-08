@@ -207,9 +207,9 @@ def combine_subquery_responses(responses, query):
     return combined_context
 
 # process_query_and_generate_final_answer関数を修正
-def process_query_and_generate_final_answer(query, chat_history, llm, combined_handler, user_role):
+def process_query_and_generate_final_answer(query, chat_history, llm, combined_handler, user_role, subqueries):
     start_time = time.time()
-    subqueries = split_query(query)
+    print(f"process_query_and_generate_final_answer で使用されるサブクエリ: {subqueries}")  # デバッグ用
     subquery_responses = []
     all_retrieved_chunks = []
     total_retrieval_time = 0
@@ -462,6 +462,13 @@ def main():
                     
                     st.markdown("---")
                     
+                    # split_queryの結果を表示（ここで一度だけ呼び出す）
+                    subqueries = split_query(query)
+                    st.subheader("生成されたサブクエリ:")
+                    for i, subquery in enumerate(subqueries):
+                        st.write(f"{i+1}. {subquery}")
+                    st.markdown("---")
+                    
                     # RAGを利用する回答のストリーミング
                     st.markdown("**RAGを利用した回答：**")
                     rag_container = st.empty()
@@ -470,20 +477,13 @@ def main():
                     rag_combined_handler = CombinedStreamHandler(rag_streamlit_handler, rag_stdout_handler)
                     
                     rag_llm_history = generate_llm_history(st.session_state.rag_conversation_history, use_rag=True)
-                    rag_answer, total_retrieval_time, llm_time, total_time, all_retrieved_chunks = process_query_and_generate_final_answer(query, rag_llm_history, llm, rag_combined_handler, user_role)
+                    rag_answer, total_retrieval_time, llm_time, total_time, all_retrieved_chunks = process_query_and_generate_final_answer(query, rag_llm_history, llm, rag_combined_handler, user_role, subqueries)
                     
                     st.markdown("**処理時間:**")
                     st.write(f"ベクトル変換: 0.0000秒")
                     st.write(f"関連情報検索: {total_retrieval_time:.4f}秒")
                     st.write(f"回答生成: {llm_time:.4f}秒")
                     
-                    st.markdown("---")
-                    
-                    # split_queryの結果を表示
-                    subqueries = split_query(query)
-                    st.subheader("生成されたサブクエリ:")
-                    for i, subquery in enumerate(subqueries):
-                        st.write(f"{i+1}. {subquery}")
                     st.markdown("---")
                     
                     # チャンクの表示
