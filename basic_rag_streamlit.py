@@ -16,6 +16,7 @@ import requests
 import psycopg2
 import json
 import re
+from sentence_transformers import CrossEncoder
 
 # 警告を無視
 warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
@@ -125,26 +126,43 @@ def split_query(query):
     print("有効なサブクエリを生成できませんでした。元のクエリを使用します。")
     return [query]  # 元のクエリをそのまま使用
 
-# get_filtered_chunks関数を修正
-def get_filtered_chunks(subquery, user_role, k=3):
+def get_filtered_chunks(subquery, user_role, initial_k=10, final_k=3):
     if user_role == "manager":
-        docs_and_scores = vectorstore.similarity_search_with_score(subquery, k=k)
+        docs_and_scores = vectorstore.similarity_search_with_score(subquery, k=initial_k)
     else:
         docs_and_scores = vectorstore.similarity_search_with_score(
             subquery,
-            k=k,
+            k=initial_k,
             filter={"access_level": "general"}
         )
     
-    # スコアを変換：1 - score
-    # 注意: スコアが非常に大きい場合、負の値になる可能性があるため、max関数を使用
-    filtered_chunks = [(doc.page_content, max(0, 1 - score)) for doc, score in docs_and_scores]
+    # 初期のチャンクとスコアのリストを作成
+    initial_chunks = [(doc.page_content, 1 - score) for doc, score in docs_and_scores]  # スコアを1 - scoreに変換
+    
+    # rerankモデルを使用してチャンクを並び替え
+    reranked_chunks = rerank_chunks(subquery, initial_chunks)
+    
+    # 上位final_k個のチャンクを選択
+    filtered_chunks = reranked_chunks[:final_k]
     
     if DEBUG_MODE:
         print(f"サブクエリ '{subquery}' に対する取得チャンク: {filtered_chunks}")
         print(f"取得チャンク数: {len(filtered_chunks)}")
     
     return filtered_chunks
+
+def rerank_chunks(query, chunks, model_name='cross-encoder/ms-marco-MiniLM-L-12-v2'):
+    reranker = CrossEncoder(model_name)
+    pairs = [[query, chunk] for chunk, _ in chunks]
+    scores = reranker.predict(pairs)
+    
+    # スコアを0-1の範囲に正規化
+    min_score, max_score = min(scores), max(scores)
+    normalized_scores = [(score - min_score) / (max_score - min_score) for score in scores]
+    
+    reranked_chunks = [(chunk, float(score)) for (chunk, _), score in zip(chunks, normalized_scores)]
+    reranked_chunks.sort(key=lambda x: x[1], reverse=True)
+    return reranked_chunks
 
 def process_subquery(subquery, context, llm):
     response_prompt = PromptTemplate(
@@ -216,7 +234,7 @@ def process_query_and_generate_final_answer(query, chat_history, llm, combined_h
     
     for subquery in subqueries:
         subquery_start_time = time.time()
-        filtered_chunks = get_filtered_chunks(subquery, user_role, k=3)
+        filtered_chunks = get_filtered_chunks(subquery, user_role)  # kを削除
         total_retrieval_time += time.time() - subquery_start_time
         
         all_retrieved_chunks.append((subquery, filtered_chunks))
