@@ -75,9 +75,14 @@ def split_query(query):
         3. "2023年のMacの売上高は？"
         （注：この場合、3つのサブクエリが必要です。）
 
-        重要: 回答は必ず以下の形式の有効なJSONのみで返してください。余分なテキストや説明は一切含めないでください：
+        重要: 回答は必ず以下の形式の有効なJSONのみで返してください。余分なテキストや説明は一切含めないでください。
+        全ての文字列は必ず半角の二重引用符（"）で囲んでください。
+        全角の括弧（「」）や他の全角文字は使用しないでください。
+
+        正しい形式の例：
         {{"subqueries": ["サブクエリ1", "サブクエリ2", "サブクエリ3"]}}
-        （注：サブクエリが2つの場合は、"サブクエリ3"を省略してください。）
+        または
+        {{"subqueries": ["サブクエリ1", "サブクエリ2"]}}
 
         クエリ: {query}
         """
@@ -85,12 +90,15 @@ def split_query(query):
     chain = LLMChain(llm=llm, prompt=split_prompt)
     result = chain.run(query)
     
+    # LLMの出力を前処理
+    result = result.replace('」', '"').replace('「', '"')
+    
     try:
         parsed_result = json.loads(result)
         if "subqueries" in parsed_result and isinstance(parsed_result["subqueries"], list):
             # SQLクエリでないことを確認
             if not any("SELECT" in subquery.upper() for subquery in parsed_result["subqueries"]):
-                print(f"生成されたサブクエリ: {parsed_result['subqueries']}")  # ここで生成されたサブクエリを表示
+                print(f"生成されたサブクエリ: {parsed_result['subqueries']}")
                 return parsed_result["subqueries"]
             else:
                 print("SQLクエリが含まれています。元のクエリを使用します。")
@@ -101,7 +109,9 @@ def split_query(query):
         json_match = re.search(r'\{.*\}', result, re.DOTALL)
         if json_match:
             try:
-                parsed_result = json.loads(json_match.group())
+                # 抽出されたJSONも前処理
+                json_str = json_match.group().replace('」', '"').replace('「', '"')
+                parsed_result = json.loads(json_str)
                 if "subqueries" in parsed_result and isinstance(parsed_result["subqueries"], list):
                     # SQLクエリでないことを確認
                     if not any("SELECT" in subquery.upper() for subquery in parsed_result["subqueries"]):
@@ -110,7 +120,7 @@ def split_query(query):
                         print("SQLクエリが含まれています。元のクエリを使用します。")
                         return [query]
             except json.JSONDecodeError:
-                print(f"抽出されたJSONのパースにも失敗しました: {json_match.group()}")
+                print(f"抽出されたJSONのパースにも失敗しました: {json_str}")
     
     print("有効なサブクエリを生成できませんでした。元のクエリを使用します。")
     return [query]  # 元のクエリをそのまま使用
@@ -505,7 +515,7 @@ def main():
         
         except Exception as e:
             st.error(f"エラーが発生しました: {str(e)}")
-            print(f"詳細なエラー情報: {e}")  # デバッグ用���コンソールに詳細を出力
+            print(f"詳細なエラー情報: {e}")  # デバッグ用コンソールに詳細を出力
         
         finally:
             # 入力欄をクリア
