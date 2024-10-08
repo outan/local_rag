@@ -255,13 +255,22 @@ def process_query_and_generate_final_answer(query, chat_history, llm, combined_h
     return combined_handler.text, total_retrieval_time, llm_time, total_time, all_retrieved_chunks
 
 def get_no_rag_answer(llm, query, combined_handler, chat_history):
-    no_rag_prompt = """以下のクエリに日本語で簡潔に答えてください。専門用語は説明を加えてください。
-    回答は必ず日本語でお願いします。英語での回答は避け、日本語のみで答してください。
-    
+    no_rag_prompt = """以下のクエリに日本語で答えてください。以下の点に注意してください：
+
+    1. 回答は必ず日本語でお願いします。英語での回答は避けてください。
+    2. 情報の正確性と忠実性を最優先してください。
+    3. 確実に知っている情報のみを含めてください。
+    4. 不確かな情報や推測は避け、「その情報は確認できません」と正直に述べてください。
+    5. 質問の一部にしか答えられない場合は、答えられる部分のみ回答し、残りは分からないと明示してください。
+    6. 専門用語を使用する場合は、簡潔な説明を加えてください。
+    7. 回答に自信がない場合は、その旨を明確に伝えてください。
+
     これまでの会話履歴:
     {chat_history}
 
     クエリ: {query}
+
+    回答:
     """
     start_time = time.time()
     formatted_chat_history = "\n".join([f"Human: {h[0]}\nAI: {h[1]}" for h in chat_history])
